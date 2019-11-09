@@ -1,0 +1,20 @@
+[package]
+name = "valet_boy"
+version = "0.1.0"
+authors = ["Paul Dicker <pitdicker@gmail.com>"]
+edition = "2018"
+
+description = "Croos platform thread parking abstraction"
+readme = "README.md"
+documentation = "https://docs.rs/once_cell"
+
+repository = "https://github.com/pitdicker/valet_boy"
+keywords = ["thread", "park", "futex"]
+categories = ["Concurrency", "no_std"]
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+exclude = [".travis.yml"]
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2.55"
