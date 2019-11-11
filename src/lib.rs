@@ -18,6 +18,9 @@ mod posix;
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
 mod waiter_queue;
 
+#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+mod futex_like;
+
 pub trait Waiters {
     /// Park the current thread. Reparks after a spurious wakeup.
     unsafe fn wait<P>(&self, should_wait: P)
