@@ -8,6 +8,14 @@ use core::time::Duration;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
 
+// Fallback for Posix systems
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+mod posix;
+
+// Implementation of `Waiter` for platforms that require some state to park.
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+mod waiter_queue;
+
 pub trait Waiters {
     /// Park the current thread. Reparks after a spurious wakeup.
     unsafe fn wait<P>(&self, should_wait: P)
