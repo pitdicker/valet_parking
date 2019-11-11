@@ -7,6 +7,8 @@ use core::time::Duration;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
+#[cfg(windows)]
+mod windows;
 
 // Fallback for Posix systems
 #[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]

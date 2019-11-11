@@ -16,5 +16,9 @@ categories = ["Concurrency", "no_std"]
 
 exclude = [".travis.yml"]
 
+[target.'cfg(windows)'.dependencies]
+winapi = { version = "0.3", features = ["winnt", "ntstatus", "minwindef",
+    "winerror", "winbase", "errhandlingapi", "handleapi"] }
+
 [target.'cfg(unix)'.dependencies]
 libc = "0.2.55"
