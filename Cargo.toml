@@ -1,14 +1,14 @@
 [package]
-name = "valet_boy"
+name = "valet_parking"
 version = "0.1.0"
 authors = ["Paul Dicker <pitdicker@gmail.com>"]
 edition = "2018"
 
-description = "Croos platform thread parking abstraction"
+description = "Croos platform thread parking"
 readme = "README.md"
-documentation = "https://docs.rs/once_cell"
+documentation = "https://docs.rs/valet_parking"
 
-repository = "https://github.com/pitdicker/valet_boy"
+repository = "https://github.com/pitdicker/valet_parking"
 keywords = ["thread", "park", "futex"]
 categories = ["Concurrency", "no_std"]
 
