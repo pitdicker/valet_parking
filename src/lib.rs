@@ -7,18 +7,20 @@ use core::time::Duration;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux;
+#[cfg(any(target_os = "redox"))]
+mod redox;
 #[cfg(windows)]
 mod windows;
 
 // Fallback for Posix systems
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "redox"))))]
 mod posix;
 
 // Implementation of `Waiter` for platforms that require some state to park.
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android"))))]
+#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "redox"))))]
 mod waiter_queue;
 
-#[cfg(any(windows, target_os = "linux", target_os = "android"))]
+#[cfg(any(windows, target_os = "linux", target_os = "android", target_os = "redox"))]
 mod futex_like;
 
 pub trait Waiters {
