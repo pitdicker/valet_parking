@@ -38,16 +38,13 @@ const STATE_MASK: usize = 0x3 << (RESERVED_BITS - 2);
 pub(crate) const COUNTER_MASK: usize = RESERVED_MASK ^ STATE_MASK;
 
 impl Waiters for AtomicUsize {
-    unsafe fn wait<P>(&self, should_park: P)
-    where
-        P: Fn(usize) -> bool,
-    {
+    fn compare_and_wait(&self, compare: usize) {
+        assert_eq!(compare & RESERVED_MASK, 0);
         loop {
-            let current = self.load(Ordering::SeqCst);
-            if !should_park(current & !RESERVED_MASK) {
+            self.futex_wait(compare, None);
+            if self.load(Ordering::SeqCst) != compare {
                 break;
             }
-            self.futex_wait(current, None);
         }
     }
 

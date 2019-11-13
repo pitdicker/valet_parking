@@ -27,15 +27,23 @@ mod futex_like;
 
 pub trait Waiters {
     /// Park the current thread. Reparks after a spurious wakeup.
-    unsafe fn wait<P>(&self, should_wait: P)
-    where
-        P: Fn(usize) -> bool;
+    ///
+    /// `compare` is used to decide if this thread needs to be parked. This avoids a race condition
+    /// where one thread may try to park itself, while another thread unparks it concurrently. It is
+    /// also used to detect whether a wakeup was spurious, in wich case this function will repark
+    /// the thread.
+    ///
+    /// Only the five non-reserved bits will be compared, all other bits must be zero.
+    fn compare_and_wait(&self, compare: usize);
 
-    /// Unpark all waiting threads. `new` must be provided set `self` to some value that is not
-    /// matched by the `should_park` function passed to `park`.
+    /// Unpark all waiting threads.
+    ///
+    ///`new` must be provided to set `self` to some value that is not matched by the `compare`
+    /// variable passed to `park`. It will be stored with Release ordering or stronger.
     ///
     /// # Safety
-    /// * Don't change any of the reserved bits while there can be threads parked.
+    /// If any of the reserved bits where changed while there where threads waiting, this function
+    /// may fail to wake threads, or even dereference invalid pointers.
     unsafe fn store_and_wake(&self, new: usize);
 }
 

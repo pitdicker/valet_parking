@@ -10,15 +10,12 @@ struct Waiter {
 }
 
 impl Waiters for AtomicUsize {
-    unsafe fn wait<P>(&self, should_wait: P)
-    where
-        P: Fn(usize) -> bool,
-    {
+    unsafe fn compare_and_wait(&self, compare: usize) {
         let mut current = self.load(Ordering::Relaxed);
         loop {
             let pub_bits = current & !RESERVED_MASK;
             let next = (current & RESERVED_MASK) << FREE_BITS;
-            if !should_wait(pub_bits) {
+            if pub_bits != compare {
                 break;
             }
             // Create a node for our current thread.
