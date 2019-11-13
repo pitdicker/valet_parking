@@ -4,8 +4,7 @@ use core::time::Duration;
 use crate::{Parker, Waiters, RESERVED_BITS, RESERVED_MASK};
 
 pub(crate) enum ThreadCount {
-    One,
-    // Some(usize), FIXME: not implemented
+    Some(u32),
     All,
 }
 
@@ -107,6 +106,6 @@ impl Parker for AtomicUsize {
             // nothing for us to do.
             return;
         }
-        self.futex_wake(ThreadCount::One);
+        self.futex_wake(ThreadCount::Some(1));
     }
 }

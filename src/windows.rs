@@ -10,28 +10,24 @@ use core::time::Duration;
 use winapi::shared::basetsd::SIZE_T;
 use winapi::shared::minwindef::{BOOL, DWORD, TRUE, ULONG};
 use winapi::shared::ntdef::NTSTATUS;
-use winapi::shared::ntstatus::STATUS_SUCCESS;
+use winapi::shared::ntstatus::{STATUS_ALERTED, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_USER_APC};
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::{
-    ACCESS_MASK, BOOLEAN, GENERIC_READ, GENERIC_WRITE, HANDLE, LPCSTR, PHANDLE, PLARGE_INTEGER,
-    PVOID,
+    ACCESS_MASK, BOOLEAN, GENERIC_READ, GENERIC_WRITE, HANDLE, LPCSTR, PHANDLE, PVOID,
 };
 
 use crate::futex_like::{FutexLike, ThreadCount, COUNTER_MASK};
 
 impl FutexLike for AtomicUsize {
-    fn futex_wait(&self, compare: usize, ts: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
         match BACKEND.get() {
             Backend::Wait(f) => {
                 let address = self as *const _ as PVOID;
-                let compare_address = &current as *const _ as PVOID;
-                let r = (f.WaitOnAddress)(
-                    address,
-                    compare_address,
-                    mem::size_of::<AtomicUsize>(),
-                    INFINITE,
-                );
+                let compare_address = &compare as *const _ as PVOID;
+                let ms = convert_timeout_ms(timeout);
+                let r =
+                    (f.WaitOnAddress)(address, compare_address, mem::size_of::<AtomicUsize>(), ms);
                 debug_assert!(r == TRUE);
             }
             Backend::Keyed(f) => {
@@ -39,11 +35,36 @@ impl FutexLike for AtomicUsize {
                 // overflow out of our counter bits. But it is impossible to have so many
                 // threads waiting that it doesn't fit in 2^25 on 32-bit and 2^57 on 64-bit
                 // (there would not be enough memory to hold their stacks).
-                self.fetch_add(1, Ordering::Relaxed);
-                // We need to provide some unique key to wait on, the address of `self` seems
-                // like a good candidate.
+                let mut current = self.load(Ordering::Relaxed);
+                loop {
+                    if current & !RESERVED != compare {
+                        return;
+                    }
+                    let old = self.compare_and_swap(current, current + 1, Ordering::Relaxed);
+                    if old == current {
+                        break;
+                    }
+                    current = old;
+                }
+                // We need to provide some unique key to wait on. The least significant bit must be
+                // zero, it is appearently used as a flag bit. The address of `self` seems like a
+                // good candidate.
                 let key = self as *const AtomicUsize as PVOID;
-                (f.NtWaitForKeyedEvent)(f.handle, key, 0, ptr::null_mut());
+                let nt_timeout = convert_timeout_100ns(timeout);
+                let timeout_ptr = nt_timeout
+                    .map(|t_ref| t_ref as *mut _)
+                    .unwrap_or(ptr::null_mut());
+                let r = (f.NtWaitForKeyedEvent)(f.handle, key, 0, timeout_ptr);
+                // `NtWaitForKeyedEvent` is an undocumented API where we don't known the possible
+                // return values are unknown, but they are probably similar to
+                // `NtWaitForSingleObject`.
+                if r == STATUS_SUCCESS {
+                    debug_assert!(
+                        r == STATUS_ALERTED
+                            || r == STATUS_USER_APC
+                            || (nt_timeout.is_some() && r == STATUS_TIMEOUT)
+                    );
+                }
             }
             Backend::None => unreachable!(),
         }
@@ -54,17 +75,38 @@ impl FutexLike for AtomicUsize {
             (Backend::Wait(f), ThreadCount::All) => {
                 (f.WakeByAddressAll)(self as *const _ as PVOID);
             }
-            (Backend::Wait(f), ThreadCount::One) => {
-                (f.WakeByAddressSingle)(self as *const _ as PVOID);
+            (Backend::Wait(f), ThreadCount::Some(n)) => {
+                for _ in 0..n {
+                    (f.WakeByAddressSingle)(self as *const _ as PVOID);
+                }
             }
             (Backend::Keyed(f), ThreadCount::All) => {
                 let waiter_count = self.load(Ordering::Relaxed) & COUNTER_MASK;
-                // FIXME: substract awoken count from state.
-                let count = cmp::max(count, waiter_count);
+                // FIXME: reset count
                 // Recreate the key; the address of self.
                 let key = self as *const AtomicUsize as PVOID;
                 // With every event we wake one thread. If we would try to wake a thread that is not
                 // parked we will block indefinitely.
+                for _ in 0..waiter_count {
+                    (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
+                }
+            }
+            (Backend::Keyed(f), ThreadCount::Some(n)) => {
+                let mut waiter_count = self.load(Ordering::Relaxed) & COUNTER_MASK;
+                let mut count;
+                loop {
+                    count = cmp::min(waiter_count, n as usize);
+                    let old = self.compare_and_swap(
+                        waiter_count,
+                        waiter_count - count,
+                        Ordering::Relaxed,
+                    );
+                    if old == waiter_count {
+                        break;
+                    }
+                    waiter_count = old;
+                }
+                let key = self as *const AtomicUsize as PVOID;
                 for _ in 0..count {
                     (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
                 }
@@ -138,6 +180,12 @@ enum Backend {
     Wait(WaitAddress),
     Keyed(KeyedEvent),
 }
+
+// LARGE_INTEGER in WinAPI is a struct instead of integer, and not ergonomic to use.
+#[allow(non_camel_case_types)]
+type LARGE_INTEGER = i64;
+#[allow(non_camel_case_types)]
+type PLARGE_INTEGER = *mut LARGE_INTEGER;
 
 #[derive(Clone, Copy)]
 struct WaitAddress {
@@ -257,3 +305,40 @@ fn ProbeKeyedEvent() -> Option<KeyedEvent> {
 //
 // http://joeduffyblog.com/2006/11/28/windows-keyed-events-critical-sections-and-new-vista-synchronization-features/
 // http://locklessinc.com/articles/keyed_events/
+
+// NT uses a timeout in units of 100ns, where positive values are absolute and negative values are
+// relative.
+fn convert_timeout_100ns(timeout: Option<Duration>) -> Option<LARGE_INTEGER> {
+    match timeout {
+        Some(duration) => {
+            if duration.as_secs() > i64::max_value() as u64 {
+                return None;
+            }
+            // Checked operations that return `None` on overflow.
+            // Round nanosecond values up to 100 ns.
+            (duration.as_secs() as i64)
+                .checked_mul(-10_000_000)
+                .and_then(|x| x.checked_sub((duration.subsec_nanos() as i64 + 99) / 100))
+        }
+        None => None,
+    }
+}
+
+// Timeout in milliseconds, round nanosecond values up to milliseconds.
+fn convert_timeout_ms(timeout: Option<Duration>) -> DWORD {
+    match timeout {
+        None => INFINITE,
+        Some(duration) => duration
+            .as_secs()
+            .checked_mul(1000)
+            .and_then(|x| x.checked_add((duration.subsec_nanos() as u64 + 999999) / 1000000))
+            .map(|ms| {
+                if ms > <DWORD>::max_value() as u64 {
+                    INFINITE
+                } else {
+                    ms as DWORD
+                }
+            })
+            .unwrap_or(INFINITE),
+    }
+}

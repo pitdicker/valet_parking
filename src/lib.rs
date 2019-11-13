@@ -5,25 +5,29 @@ use core::mem;
 use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
 
-#[cfg(any(target_os = "linux", target_os = "android"))]
-mod linux;
-#[cfg(any(target_os = "freebsd"))]
-mod freebsd;
-#[cfg(any(target_os = "redox"))]
-mod redox;
-#[cfg(windows)]
-mod windows;
+use cfg_if::cfg_if;
 
-// Fallback for Posix systems
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "redox", target_os = "freebsd"))))]
-mod posix;
-
-// Implementation of `Waiter` for platforms that require some state to park.
-#[cfg(all(unix, not(any(target_os = "linux", target_os = "android", target_os = "redox", target_os = "freebsd"))))]
-mod waiter_queue;
-
-#[cfg(any(windows, target_os = "linux", target_os = "android", target_os = "redox", target_os = "freebsd"))]
-mod futex_like;
+cfg_if! {
+    if #[cfg(all(unix, feature = "posix"))] {
+        mod posix;
+        mod waiter_queue;
+    } else if #[cfg(any(target_os = "linux", target_os = "android"))] {
+        mod linux;
+        mod futex_like;
+    } else if #[cfg(target_os = "freebsd")] {
+        mod freebsd;
+        mod futex_like;
+    } else if #[cfg(target_os = "redox")] {
+        mod redox;
+        mod futex_like;
+    } else if #[cfg(unix)] {
+        mod posix;
+        mod waiter_queue;
+    } else if #[cfg(windows)] {
+        mod windows;
+        mod futex_like;
+    }
+}
 
 pub trait Waiters {
     /// Park the current thread. Reparks after a spurious wakeup.

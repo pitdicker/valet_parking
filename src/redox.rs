@@ -17,7 +17,7 @@ const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32
 
 impl FutexLike for AtomicUsize {
     #[inline]
-    fn futex_wait(&self, compare: usize, _ts: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, _timeout: Option<Duration>) {
         let ptr = as_u32_pub(self) as *mut i32;
         let compare = (compare >> UNCOMPARED_BITS) as u32 as i32;
         let r = unsafe { call::futex(ptr, FUTEX_WAIT, compare, 0, ptr::null_mut()) };
@@ -33,6 +33,10 @@ impl FutexLike for AtomicUsize {
         let ptr = as_u32_pub(self) as *mut i32;
         let max_threads_to_wake = match count {
             ThreadCount::One => 1,
+            ThreadCount::Some(n) => {
+                assert!(n <= i32::max_value() as u32);
+                n as i32
+            }
             ThreadCount::All => i32::max_value(),
         };
         let r = unsafe { call::futex(ptr, FUTEX_WAKE, max_threads_to_wake, 0, ptr::null_mut()) };

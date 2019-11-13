@@ -10,7 +10,7 @@ struct Waiter {
 }
 
 impl Waiters for AtomicUsize {
-    unsafe fn compare_and_wait(&self, compare: usize) {
+    fn compare_and_wait(&self, compare: usize) {
         let mut current = self.load(Ordering::Relaxed);
         loop {
             let pub_bits = current & !RESERVED_MASK;
@@ -41,7 +41,7 @@ impl Waiters for AtomicUsize {
     }
 
     unsafe fn store_and_wake(&self, new: usize) {
-        let queue = self.swap(new, Ordering::RelAcq);
+        let queue = self.swap(new, Ordering::AcqRel);
 
         // Walk the entire linked list of waiters and wake them up (in lifo
         // order, last to register is first to wake up).
