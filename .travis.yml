@@ -1,0 +1,24 @@
+branches:
+  only:
+    - staging
+    - master
+
+language: rust
+
+matrix:
+  include:
+  - rust: stable
+    script:
+    - cargo test
+    - cargo test --release
+
+  - rust: beta
+    script:
+    - cargo test
+    - cargo test --release
+
+  - rust: nightly
+    script:
+    - cargo test
+    - cargo test --release
+
