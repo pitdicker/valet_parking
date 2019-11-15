@@ -20,6 +20,9 @@ cfg_if! {
     } else if #[cfg(target_os = "redox")] {
         mod redox;
         mod futex_like;
+    } else if #[cfg(target_os = "fuchsia")] {
+        mod fuchsia;
+        mod futex_like;
     } else if #[cfg(unix)] {
         mod posix;
         mod waiter_queue;

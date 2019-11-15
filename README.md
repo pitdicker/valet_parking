@@ -32,7 +32,7 @@ This does however takes some extra care on the side of `valet` to ensure no thre
 | OpenBSD          | futex[⁷]                | (WIP)
 | Posix-compatible | condition variable[⁸]   | we keep a queue of waiting threads
 | Generic fallback | spin loop               | (WIP)
-| Fuchsia OS       | futex[⁹]                | (WIP)
+| Fuchsia OS       | futex[⁹]                | (untested)
 | Redox            | futex[¹⁰]               | (untested)
 | CloudABI         | lock[¹¹]                | (WIP), uses some bits of the atomic
 | Fortanix SGX     | wait[¹²]                | (WIP), we keep a queue of waiting threads
