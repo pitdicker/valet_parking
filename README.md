@@ -28,7 +28,7 @@ This does however takes some extra care on the side of `valet` to ensure no thre
 | Linux, Android   | futex[¹] [²]            |
 | Windows 8+       | WaitOnAddress[³]        |
 | Windows XP+      | NT Keyed Events[⁴] [⁵]  | we keep a count of the waiting threads
-| FreeBSD          | umutex[⁶]               | (untested)
+| FreeBSD          | umutex[⁶]               |
 | OpenBSD          | futex[⁷]                | (WIP)
 | Posix-compatible | condition variable[⁸]   | we keep a queue of waiting threads
 | Generic fallback | spin loop               | (WIP)
