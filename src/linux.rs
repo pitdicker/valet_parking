@@ -1,10 +1,10 @@
 use core::mem;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::{FutexLike, ThreadCount};
+use crate::futex_like::FutexLike;
 
 // Linux futex takes an `i32` to compare if the thread should be parked.
 // convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
@@ -41,26 +41,21 @@ impl FutexLike for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, count: ThreadCount) {
+    fn futex_wake(&self, new: usize) {
+        self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut i32;
-        let max_threads_to_wake = match count {
-            ThreadCount::Some(n) => {
-                assert!(n <= i32::max_value() as u32);
-                n as i32
-            }
-            ThreadCount::All => i32::max_value(),
-        };
+        let wake_count = i32::max_value();
         let r = unsafe {
             futex(
                 ptr,
                 libc::FUTEX_WAKE | libc::FUTEX_PRIVATE_FLAG,
-                max_threads_to_wake as i32,
+                wake_count,
                 ptr::null(),
                 ptr::null_mut(),
                 0,
             )
         };
-        debug_assert!((r >= 0 && r <= max_threads_to_wake as i64) || r == -1);
+        debug_assert!((r >= 0 && r <= wake_count as i64) || r == -1);
         if r == -1 {
             debug_assert_eq!(errno(), libc::EFAULT);
         }

@@ -1,7 +1,6 @@
 #![allow(non_snake_case)]
 
 use core::cell::Cell;
-use core::cmp;
 use core::mem;
 use core::ptr;
 use core::sync::atomic::{spin_loop_hint, AtomicUsize, Ordering};
@@ -17,7 +16,7 @@ use winapi::um::winnt::{
     ACCESS_MASK, BOOLEAN, GENERIC_READ, GENERIC_WRITE, HANDLE, LPCSTR, PHANDLE, PVOID,
 };
 
-use crate::futex_like::{FutexLike, ThreadCount, COUNTER_MASK};
+use crate::futex_like::{FutexLike, COUNTER_MASK};
 
 impl FutexLike for AtomicUsize {
     fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
@@ -37,7 +36,7 @@ impl FutexLike for AtomicUsize {
                 // (there would not be enough memory to hold their stacks).
                 let mut current = self.load(Ordering::Relaxed);
                 loop {
-                    if current & !RESERVED != compare {
+                    if current & !COUNTER_MASK != compare {
                         return;
                     }
                     let old = self.compare_and_swap(current, current + 1, Ordering::Relaxed);
@@ -70,48 +69,23 @@ impl FutexLike for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, count: ThreadCount) {
-        match (BACKEND.get(), count) {
-            (Backend::Wait(f), ThreadCount::All) => {
+    fn futex_wake(&self, new: usize) {
+        let current = self.swap(new, Ordering::SeqCst);
+        match BACKEND.get() {
+            Backend::Wait(f) => {
                 (f.WakeByAddressAll)(self as *const _ as PVOID);
             }
-            (Backend::Wait(f), ThreadCount::Some(n)) => {
-                for _ in 0..n {
-                    (f.WakeByAddressSingle)(self as *const _ as PVOID);
-                }
-            }
-            (Backend::Keyed(f), ThreadCount::All) => {
-                let waiter_count = self.load(Ordering::Relaxed) & COUNTER_MASK;
-                // FIXME: reset count
+            Backend::Keyed(f) => {
+                let wake_count = current & COUNTER_MASK;
                 // Recreate the key; the address of self.
                 let key = self as *const AtomicUsize as PVOID;
                 // With every event we wake one thread. If we would try to wake a thread that is not
                 // parked we will block indefinitely.
-                for _ in 0..waiter_count {
+                for _ in 0..wake_count {
                     (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
                 }
             }
-            (Backend::Keyed(f), ThreadCount::Some(n)) => {
-                let mut waiter_count = self.load(Ordering::Relaxed) & COUNTER_MASK;
-                let mut count;
-                loop {
-                    count = cmp::min(waiter_count, n as usize);
-                    let old = self.compare_and_swap(
-                        waiter_count,
-                        waiter_count - count,
-                        Ordering::Relaxed,
-                    );
-                    if old == waiter_count {
-                        break;
-                    }
-                    waiter_count = old;
-                }
-                let key = self as *const AtomicUsize as PVOID;
-                for _ in 0..count {
-                    (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
-                }
-            }
-            (Backend::None, _) => unreachable!(),
+            Backend::None => unreachable!(),
         }
     }
 }
@@ -196,7 +170,6 @@ struct WaitAddress {
         dwMilliseconds: DWORD,
     ) -> BOOL,
     WakeByAddressAll: extern "system" fn(Address: PVOID),
-    WakeByAddressSingle: extern "system" fn(Address: PVOID),
 }
 
 #[derive(Clone, Copy)]
@@ -233,16 +206,10 @@ fn ProbeWaitAddress() -> Option<WaitAddress> {
         if WakeByAddressAll.is_null() {
             return None;
         }
-        let WakeByAddressSingle =
-            GetProcAddress(synch_dll, b"WakeByAddressSingle\0".as_ptr() as LPCSTR);
-        if WakeByAddressSingle.is_null() {
-            return None;
-        }
 
         Some(WaitAddress {
             WaitOnAddress: mem::transmute(WaitOnAddress),
             WakeByAddressAll: mem::transmute(WakeByAddressAll),
-            WakeByAddressSingle: mem::transmute(WakeByAddressSingle),
         })
     }
 }

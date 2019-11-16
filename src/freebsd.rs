@@ -1,12 +1,11 @@
-use core::mem;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use libc;
 
 use crate::as_u32_pub;
-use crate::futex_like::{FutexLike, ThreadCount};
+use crate::futex_like::FutexLike;
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
@@ -38,20 +37,15 @@ impl FutexLike for AtomicUsize {
         debug_assert!(r == 0 || r == -1);
     }
 
-    fn futex_wake(&self, count: ThreadCount) {
+    fn futex_wake(&self, new: usize) {
+        self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut _;
-        let max_threads_to_wake = match count {
-            ThreadCount::Some(n) => {
-                assert!(n <= i32::max_value() as u32);
-                n as libc::c_long
-            }
-            ThreadCount::All => libc::INT_MAX as libc::c_long,
-        };
+        let wake_count = libc::INT_MAX as libc::c_long;
         let r = unsafe {
             umtx_op(
                 ptr,
                 UMTX_OP_WAKE_PRIVATE,
-                max_threads_to_wake,
+                wake_count,
                 ptr::null_mut(),
                 ptr::null_mut(),
             )

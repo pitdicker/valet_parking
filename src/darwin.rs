@@ -1,21 +1,11 @@
 #![allow(non_upper_case_globals)]
 
 use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::{FutexLike, ThreadCount};
-
-/*
-#[link(name = "libsystem_kernel")]
-extern {
-    // Only 32 bits of `addr` and `value` are used for comparison.
-    // `timeout` is specified in microseconds, with 0 for infinite.
-    fn __ulock_wait(operation: u32, addr: *mut libc::c_void, value: u64, timeout: u32) -> libc::c_int;
-    fn __ulock_wake(operation: u32, addr: *mut libc::c_void, wake_value: u64) -> libc::c_int;
-}
-*/
+use crate::futex_like::FutexLike;
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
@@ -36,10 +26,9 @@ impl FutexLike for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, _count: ThreadCount) {
+    fn futex_wake(&self, new: usize) {
+        self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut _;
-        // WARNING: we always wake all threads.
-        // To wake only one, we have to use `ULF_WAKE_THREAD` and specify a thread name.
         let _r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
     }
 }

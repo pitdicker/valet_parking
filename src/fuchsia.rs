@@ -1,11 +1,11 @@
 #![allow(non_camel_case_types)]
 
 use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::{FutexLike, ThreadCount};
+use crate::futex_like::FutexLike;
 
 // Fuchsia futex takes an `i32` to compare if the thread should be parked.
 // convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
@@ -22,13 +22,11 @@ impl FutexLike for AtomicUsize {
         debug_assert!(r == ZX_OK || r == ZX_ERR_BAD_STATE || r == ZX_ERR_TIMED_OUT);
     }
 
-    fn futex_wake(&self, count: ThreadCount) {
+    fn futex_wake(&self, new: usize) {
+        self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut i32;
-        let max_threads_to_wake = match count {
-            ThreadCount::Some(n) => n,
-            ThreadCount::All => u32::max_value(),
-        };
-        let r = unsafe { zx_futex_wake(ptr, max_threads_to_wake) };
+        let wake_count = u32::max_value();
+        let r = unsafe { zx_futex_wake(ptr, wake_count) };
         debug_assert!(r == ZX_OK);
     }
 }

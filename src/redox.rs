@@ -1,10 +1,10 @@
 use core::mem;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::{FutexLike, ThreadCount};
+use crate::futex_like::FutexLike;
 
 use syscall::call;
 use syscall::error::{Error, EAGAIN, EFAULT, EINTR, ETIMEDOUT};
@@ -29,19 +29,13 @@ impl FutexLike for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, count: ThreadCount) {
+    fn futex_wake(&self, new: usize) {
+        self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut i32;
-        let max_threads_to_wake = match count {
-            ThreadCount::One => 1,
-            ThreadCount::Some(n) => {
-                assert!(n <= i32::max_value() as u32);
-                n as i32
-            }
-            ThreadCount::All => i32::max_value(),
-        };
-        let r = unsafe { call::futex(ptr, FUTEX_WAKE, max_threads_to_wake, 0, ptr::null_mut()) };
+        let wake_count = i32::max_value();
+        let r = unsafe { call::futex(ptr, FUTEX_WAKE, wake_count, 0, ptr::null_mut()) };
         match r {
-            Ok(num_woken) => debug_assert!(num_woken <= max_threads_to_wake as usize),
+            Ok(num_woken) => debug_assert!(num_woken <= wake_count as usize),
             Err(Error { errno }) => debug_assert_eq!(errno, EFAULT),
         }
     }

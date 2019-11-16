@@ -3,14 +3,25 @@ use core::time::Duration;
 
 use crate::{Parker, Waiters, RESERVED_BITS, RESERVED_MASK};
 
-pub(crate) enum ThreadCount {
-    Some(u32),
-    All,
-}
-
 pub(crate) trait FutexLike {
+    // Park the current thread if `self` equals `compare`. Most implementations will only compare
+    // the 32 high-order bits.
+    //
+    // `timeout` is relative duration, not an absolute deadline.
+    //
+    // This function does not guard against spurious wakeups.
     fn futex_wait(&self, compare: usize, timeout: Option<Duration>);
-    fn futex_wake(&self, count: ThreadCount);
+
+    // Wake all threads waiting on `self`, and set `self` to `new`.
+    //
+    // Some implementations need to set `self` to another value before waking up threads, in order
+    // to detect spurious wakeups. Other implementations need to change `self` later, like NT Keyed
+    // Events for one needs to know the number of threads parked. So we make it up to the
+    // implementation to set set `self` to `new`.
+    //
+    // We don't support waking n out of m waiting threads. This gets into pretty advanced use cases,
+    // and it is not clear this can be supported cross-platform and without too much overhead.
+    fn futex_wake(&self, new: usize);
 }
 
 // Layout of the atomic:
@@ -48,8 +59,7 @@ impl Waiters for AtomicUsize {
     }
 
     unsafe fn store_and_wake(&self, new: usize) {
-        self.store(new, Ordering::SeqCst);
-        self.futex_wake(ThreadCount::All);
+        self.futex_wake(new);
     }
 }
 
@@ -106,6 +116,6 @@ impl Parker for AtomicUsize {
             // nothing for us to do.
             return;
         }
-        self.futex_wake(ThreadCount::Some(1));
+        self.futex_wake(NOTIFIED);
     }
 }
