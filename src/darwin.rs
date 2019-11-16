@@ -7,11 +7,6 @@ use core::time::Duration;
 use crate::as_u32_pub;
 use crate::futex_like::{FutexLike, ThreadCount};
 
-const UL_COMPARE_AND_WAIT: u32 = 1;
-const ULF_WAKE_ALL: u32 = 0x100;
-const SYS_ulock_wait: libc::c_int = 515;
-const SYS_ulock_wake: libc::c_int = 516;
-
 /*
 #[link(name = "libsystem_kernel")]
 extern {
@@ -21,17 +16,6 @@ extern {
     fn __ulock_wake(operation: u32, addr: *mut libc::c_void, wake_value: u64) -> libc::c_int;
 }
 */
-
-// Only 32 bits of `addr` and `value` are used for comparison.
-// `timeout` is specified in microseconds, with 0 for infinite.
-unsafe fn ulock_wait(operation: u32, addr: *mut libc::c_void, value: u64, timeout: u32) -> libc::c_int {
-    libc::syscall(SYS_ulock_wait, operation, addr, value, timeout)
-}
-
-// Wake_value is used to specify the thread to wake, used in combination with `ULF_WAKE_THREAD`.
-unsafe fn ulock_wake(operation: u32, addr: *mut libc::c_void, wake_value: u64) -> libc::c_int {
-    libc::syscall(SYS_ulock_wake, operation, addr, wake_value)
-}
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
@@ -58,6 +42,22 @@ impl FutexLike for AtomicUsize {
         // To wake only one, we have to use `ULF_WAKE_THREAD` and specify a thread name.
         let _r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
     }
+}
+
+const UL_COMPARE_AND_WAIT: u32 = 1;
+const ULF_WAKE_ALL: u32 = 0x100;
+const SYS_ulock_wait: libc::c_int = 515;
+const SYS_ulock_wake: libc::c_int = 516;
+
+// Only 32 bits of `addr` and `value` are used for comparison.
+// `timeout` is specified in microseconds, with 0 for infinite.
+unsafe fn ulock_wait(operation: u32, addr: *mut libc::c_void, value: u64, timeout: u32) -> libc::c_int {
+    libc::syscall(SYS_ulock_wait, operation, addr, value, timeout)
+}
+
+// Wake_value is used to specify the thread to wake, used in combination with `ULF_WAKE_THREAD`.
+unsafe fn ulock_wake(operation: u32, addr: *mut libc::c_void, wake_value: u64) -> libc::c_int {
+    libc::syscall(SYS_ulock_wake, operation, addr, wake_value)
 }
 
 // Timeout in microseconds, round nanosecond values up to microseconds.

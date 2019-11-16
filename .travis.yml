@@ -9,16 +9,53 @@ matrix:
   include:
   - rust: stable
     script:
-    - cargo test
-    - cargo test --release
+    - cargo build
+    - cargo run --example test_synchronization --release
+    - cargo run --example test_synchronization --release --features=posix
 
-  - rust: beta
-    script:
-    - cargo test
-    - cargo test --release
-
+  # test nightly and test cross-compiling
   - rust: nightly
+    install:
+    - rustup target add i686-unknown-linux-gnu
+    - rustup target add i686-unknown-freebsd
+    # - rustup target add x86_64-fortanix-unknown-sgx
+    - rustup target add x86_64-fuchsia
+    - rustup target add x86_64-pc-windows-gnu
+    # - rustup target add x86_64-unknown-cloudabi
+    - rustup target add x86_64-unknown-freebsd
+    - rustup target add x86_64-unknown-netbsd
+    - rustup target add x86_64-unknown-redox
+    script:
+    - cargo build
+    - cargo build --target i686-unknown-linux-gnu
+    - cargo build --target i686-unknown-freebsd
+    # - cargo build --target x86_64-fortanix-unknown-sgx
+    - cargo build --target x86_64-fuchsia
+    - cargo build --target x86_64-pc-windows-gnu
+    # - cargo build --target x86_64-unknown-cloudabi
+    - cargo build --target x86_64-unknown-freebsd
+    - cargo build --target x86_64-unknown-netbsd
+    - cargo build --target x86_64-unknown-redox
+
+  - rust: stable
+    os: osx
+    script:
+    - cargo build
+    - cargo run --example test_synchronization --release
+    - cargo run --example test_synchronization --release --features=posix
+
+  # MacOS 10.11, needs fallback
+  - rust: stable
+    os: osx
+    osx_image: xcode8
+    script:
+    - cargo build
+    - cargo run --example test_synchronization --release
+    - cargo run --example test_synchronization --release --features=posix
+
+  - rust: stable
+    os: windows
     script:
     - cargo test
     - cargo test --release
-
+    - cargo run --example test_synchronization --release
