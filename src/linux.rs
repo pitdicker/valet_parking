@@ -55,7 +55,7 @@ impl FutexLike for AtomicUsize {
                 0,
             )
         };
-        debug_assert!((r >= 0 && r <= wake_count as i64) || r == -1);
+        debug_assert!((r >= 0 && r <= wake_count as libc::c_long) || r == -1);
         if r == -1 {
             debug_assert_eq!(errno(), libc::EFAULT);
         }
