@@ -26,6 +26,9 @@ cfg_if! {
     } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
         mod darwin;
         mod futex_like;
+    } else if #[cfg(target_os = "openbsd")] {
+        mod openbsd;
+        mod futex_like;
     } else if #[cfg(unix)] {
         mod posix;
         mod waiter_queue;
