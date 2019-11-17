@@ -29,6 +29,9 @@ cfg_if! {
     } else if #[cfg(target_os = "openbsd")] {
         mod openbsd;
         mod futex_like;
+    } else if #[cfg(target_os = "dragonfly")] {
+        mod dragonfly;
+        mod futex_like;
     } else if #[cfg(unix)] {
         mod posix;
         mod waiter_queue;

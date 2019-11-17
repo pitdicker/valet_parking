@@ -38,7 +38,7 @@ This does however takes some extra care on the side of `valet` to ensure no thre
 | Fortanix SGX     | wait[¹²]                | (WIP), we keep a queue of waiting threads
 | WASM atomics     | i32.atomic.wait[¹³]     | (WIP)
 | MacOS 10.12+     | ulock                   | (WIP: needs fallback on older versions)
-
+| DragonFly BSD    | userland mutex[¹⁴]      |
 
 The goal to provide an API that can be used without allocations has a big impact on the design of `valet`. Take the generic Posix implementation as an example. It requires a condvar with a mutex for thread parking. If `valet` were to provide some `ThreadParker` type containing fields for these two, you would have to store it in some place in memory that is accessable to both threads. This would typically be an `Arc`, or some other structure requring an allocation.
 
@@ -82,3 +82,4 @@ at your option.
 [¹¹]: https://nuxi.nl/blog/2016/06/22/cloudabi-futexes.html
 [¹²]: https://docs.rs/fortanix-sgx-abi/0.3.3/fortanix_sgx_abi/struct.Usercalls.html#tcs-event-queues
 [¹³]: https://github.com/WebAssembly/threads/blob/master/proposals/threads/Overview.md
+[¹⁴]: http://man.dragonflybsd.org/?command=umtx
