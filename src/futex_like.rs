@@ -64,7 +64,7 @@ impl Waiters for AtomicUsize {
 }
 
 impl Parker for AtomicUsize {
-    fn park(&self) {
+    fn park(&self, timeout: Option<Duration>) {
         let mut current = self.load(Ordering::SeqCst);
         loop {
             match current & STATE_MASK {
@@ -84,20 +84,20 @@ impl Parker for AtomicUsize {
                 continue;
             }
 
-            while current & STATE_MASK != NOTIFIED {
-                self.futex_wait(current | PARKED, None);
-                // Load `self` so the next iteration of this loop can make sure this wakeup was not
-                // spurious, and otherwise park again.
-                current = self.load(Ordering::Relaxed);
+            if timeout.is_some() {
+                self.futex_wait(current | PARKED, timeout);
+            } else {
+                while current & STATE_MASK != NOTIFIED {
+                    self.futex_wait(current | PARKED, None);
+                    // Load `self` so the next iteration of this loop can make sure this wakeup was not
+                    // spurious, and otherwise park again.
+                    current = self.load(Ordering::Relaxed);
+                }
             }
             break;
         }
         // Reset state to `NOT_PARKED`.
         &self.fetch_and(!STATE_MASK, Ordering::Relaxed);
-    }
-
-    fn park_timed(&self, _timeout: Duration) -> bool {
-        unimplemented!();
     }
 
     unsafe fn unpark(&self) {

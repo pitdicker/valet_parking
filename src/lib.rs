@@ -41,6 +41,7 @@ cfg_if! {
     }
 }
 
+// Multiple threads can wait on a single `AtomicUsize` until one thread wakes them all up at once.
 pub trait Waiters {
     /// Park the current thread. Reparks after a spurious wakeup.
     ///
@@ -57,17 +58,44 @@ pub trait Waiters {
     ///`new` must be provided to set `self` to some value that is not matched by the `compare`
     /// variable passed to `park`. It will be stored with Release ordering or stronger.
     ///
+    /// Returns the number of waiting threads that were woken up. FIXME: todo
+    ///
     /// # Safety
     /// If any of the reserved bits where changed while there where threads waiting, this function
-    /// may fail to wake threads, or even dereference invalid pointers.
+    /// may fail to wake threads, or even dereference dangling pointers.
     unsafe fn store_and_wake(&self, new: usize);
 }
 
+/// One thread parkes itself on an `AtomicUsize`, and multiple threads or a timeout are able to wake
+/// it up.
 pub trait Parker {
-    fn park(&self);
+    /// Parks the current thread.
+    ///
+    /// Only one thread can park on `self`. If `park` is called on an atomic that already has a
+    /// thread parked on it, it will panic.
+    ///
+    /// If `timeout` is `None` this function will only return after another thread called [`unpark`]
+    /// on `self`. It will repark the thread on spurious wakeups or interrupts.
+    ///
+    /// If there is a `timeout` specified, this thread can be woken up by an [`unpark`], by the
+    /// expiration of the timeout, or spuriously.
+    ///
+    /// Platforms differ in the granularity of timeouts they support, the longest supported timeout,
+    /// and what happens if the timeout is zero. This crate enforces some restrictions:
+    /// - `park` panics if the timeout is 0.
+    /// - Timeouts are rounded *up* to the nearest granularity supported by the platform.
+    ///   Millisecond resolution is the coarsest of the current implementations.
+    /// - The maximum timeout is on all platforms in the order of days or longer, so not really of
+    ///   any concern. `park` ignores the timeout if it overflows the maximum.
+    ///
+    /// [`unpark`]: Parker::unpark
+    fn park(&self, timeout: Option<Duration>);
 
-    fn park_timed(&self, timeout: Duration) -> bool;
-
+    /// Unparks the waiting thread, if there is one.
+    ///
+    /// # Safety
+    /// If any of the reserved bits where changed while there whas a thread parked, this function
+    /// may fail to unpark it, or may even dereference a dangling pointer.
     unsafe fn unpark(&self);
 }
 

@@ -28,13 +28,55 @@ const NOTIFY_BIT: usize = 1;
 const PTR_BITS: usize = RESERVED_MASK ^ NOTIFY_BIT;
 
 impl Parker for AtomicUsize {
-    fn park(&self) {
-        park(self, None);
-    }
+    // Returns false if the wakeup was because of the timeout, or spurious.
+    fn park(&self, timeout: Option<Duration>) {
+        let parker = PosixParker {
+            mutex: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER),
+            condvar: UnsafeCell::new(libc::PTHREAD_COND_INITIALIZER),
+        };
+        let ptr = (&parker as *const PosixParker as usize) >> FREE_BITS;
 
-    fn park_timed(&self, timeout: Duration) -> bool {
         let ts = convert_timeout(timeout);
-        park(self, ts)
+
+        unsafe {
+            // Lock the mutex before making a pointer to `parker` available to other threads.
+            let r = libc::pthread_mutex_lock(parker.mutex.get());
+            debug_assert_eq!(r, 0);
+
+            let mut current = self.load(Ordering::SeqCst);
+            let mut res = true;
+            loop {
+                // If the old state had its `NOTIFY_BIT` set, some other thread unparked us even
+                // before we were able to park ourselves. Then stop trying to park ourselves and
+                // clean up.
+                if current & RESERVED_MASK == NOTIFY_BIT {
+                    break;
+                }
+
+                let old = self.compare_and_swap(current, current | ptr, Ordering::SeqCst);
+                if old != current {
+                    current = old;
+                    continue;
+                }
+
+                if let Some(timeout) = ts {
+                    res = condvar_wait_timed(self, &parker, &timeout);
+                } else {
+                    condvar_wait(self, &parker);
+                }
+                break;
+            }
+
+            // Done, clean up.
+            let r = libc::pthread_mutex_unlock(parker.mutex.get());
+            debug_assert_eq!(r, 0);
+            let r = libc::pthread_mutex_destroy(parker.mutex.get());
+            debug_assert_eq!(r, 0);
+            let r = libc::pthread_cond_destroy(parker.condvar.get());
+            debug_assert_eq!(r, 0);
+            self.fetch_and(!NOTIFY_BIT, Ordering::SeqCst);
+            res; // FIXME: returned bool in previous version
+        }
     }
 
     unsafe fn unpark(&self) {
@@ -68,55 +110,6 @@ impl Parker for AtomicUsize {
         debug_assert_eq!(r, 0);
         let r = libc::pthread_mutex_unlock((*ptr).mutex.get());
         debug_assert_eq!(r, 0);
-    }
-}
-
-// Returns false if the wakeup was because of the timeout, or spurious.
-fn park(atomic: &AtomicUsize, timeout: Option<libc::timespec>) -> bool {
-    let parker = PosixParker {
-        mutex: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER),
-        condvar: UnsafeCell::new(libc::PTHREAD_COND_INITIALIZER),
-    };
-    let ptr = (&parker as *const PosixParker as usize) >> FREE_BITS;
-
-    unsafe {
-        // Lock the mutex before making a pointer to `parker` available to other threads.
-        let r = libc::pthread_mutex_lock(parker.mutex.get());
-        debug_assert_eq!(r, 0);
-
-        let mut current = atomic.load(Ordering::SeqCst);
-        let mut res = true;
-        loop {
-            // If the old state had its `NOTIFY_BIT` set, some other thread unparked us even
-            // before we were able to park ourselves. Then stop trying to park ourselves and
-            // clean up.
-            if current & RESERVED_MASK == NOTIFY_BIT {
-                break;
-            }
-
-            let old = atomic.compare_and_swap(current, current | ptr, Ordering::SeqCst);
-            if old != current {
-                current = old;
-                continue;
-            }
-
-            if let Some(ts) = timeout {
-                res = condvar_wait_timed(atomic, &parker, &ts);
-            } else {
-                condvar_wait(atomic, &parker);
-            }
-            break;
-        }
-
-        // Done, clean up.
-        let r = libc::pthread_mutex_unlock(parker.mutex.get());
-        debug_assert_eq!(r, 0);
-        let r = libc::pthread_mutex_destroy(parker.mutex.get());
-        debug_assert_eq!(r, 0);
-        let r = libc::pthread_cond_destroy(parker.condvar.get());
-        debug_assert_eq!(r, 0);
-        atomic.fetch_and(!NOTIFY_BIT, Ordering::SeqCst);
-        res
     }
 }
 
@@ -177,12 +170,17 @@ type tv_nsec_t = i64;
 #[allow(non_camel_case_types)]
 type tv_nsec_t = libc::c_long;
 
-fn convert_timeout(timeout: Duration) -> Option<libc::timespec> {
-    if timeout.as_secs() > libc::time_t::max_value() as u64 {
-        return None;
+fn convert_timeout(timeout: Option<Duration>) -> Option<libc::timespec> {
+    match timeout {
+        Some(duration) => {
+            if duration.as_secs() > libc::time_t::max_value() as u64 {
+                return None;
+            }
+            Some(libc::timespec {
+                tv_sec: duration.as_secs() as libc::time_t,
+                tv_nsec: duration.subsec_nanos() as tv_nsec_t,
+            })
+        }
+        None => None,
     }
-    Some(libc::timespec {
-        tv_sec: timeout.as_secs() as libc::time_t,
-        tv_nsec: timeout.subsec_nanos() as tv_nsec_t,
-    })
 }

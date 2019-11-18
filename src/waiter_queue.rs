@@ -35,7 +35,7 @@ impl Waiters for AtomicUsize {
 
             // We have enqueued ourselves, now lets wait.
             // The parker will not park our thread if we got unparked just now.
-            node.parker.park();
+            node.parker.park(None);
             current = self.load(Ordering::Relaxed);
         }
     }

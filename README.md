@@ -23,22 +23,24 @@ This does however takes some extra care on the side of `valet` to ensure no thre
 
 ## Platform interfaces
 
-| OS               | interface               | notes
-|------------------|-------------------------|------------------------------------------------------
-| Linux, Android   | futex[¹] [²]            |
-| Windows 8+       | WaitOnAddress[³]        |
-| Windows XP+      | NT Keyed Events[⁴] [⁵]  | we keep a count of the waiting threads
-| FreeBSD          | umutex[⁶]               |
-| OpenBSD          | futex[⁷]                |
-| Posix-compatible | condition variable[⁸]   | we keep a queue of waiting threads
-| Generic fallback | spin loop               | (WIP)
-| Fuchsia OS       | futex[⁹]                | (untested)
-| Redox            | futex[¹⁰]               | (untested)
-| CloudABI         | lock[¹¹]                | (WIP), uses some bits of the atomic
-| Fortanix SGX     | wait[¹²]                | (WIP), we keep a queue of waiting threads
-| WASM atomics     | i32.atomic.wait[¹³]     | (WIP)
-| MacOS 10.12+     | ulock                   | (WIP: needs fallback on older versions)
-| DragonFly BSD    | userland mutex[¹⁴]      |
+| OS               | interface               | max. timeout  | notes
+|------------------|-------------------------|---------------|----------------------------------
+| Linux, Android   | futex[¹] [²]            | ≥ 2^31 s      |
+| Windows 8+       | WaitOnAddress[³]        | 2^63 ×100ns   |
+| Windows XP+      | NT Keyed Events[⁴] [⁵]  | 2^32 ms       | we keep a count of the waiting threads
+| FreeBSD          | umutex[⁶]               | 2^63 s        |
+| OpenBSD          | futex[⁷]                | 2^63 s        |
+| Posix-compatible | condition variable[⁸]   | ≥ 2^31 s      | we keep a queue of waiting threads
+| Generic fallback | spin loop               | not supported | (WIP)
+| Fuchsia OS       | futex[⁹]                | 2^63 s        | (untested)
+| Redox            | futex[¹⁰]               | 2^63 s        | (untested)
+| CloudABI         | lock[¹¹]                | ...           | (WIP), uses some bits of the atomic
+| Fortanix SGX     | wait[¹²]                | not supported | (WIP), we keep a queue of waiting threads (requires std)
+| WASM atomics     | i32.atomic.wait[¹³]     | 2^63 ns       | (WIP)
+| MacOS 10.12+     | ulock                   | 2^32 μs       | (WIP: needs fallback on older versions)
+| DragonFly BSD    | userland mutex[¹⁴]      | 2^31 μs       |
+| illumos          | futex                   | ...           | (WIP) https://github.com/rust-lang/rust/issues/55553
+| Haiku            | benaphore               | ...           | (WIP) https://github.com/nielx/haiku-rs
 
 The goal to provide an API that can be used without allocations has a big impact on the design of `valet`. Take the generic Posix implementation as an example. It requires a condvar with a mutex for thread parking. If `valet` were to provide some `ThreadParker` type containing fields for these two, you would have to store it in some place in memory that is accessable to both threads. This would typically be an `Arc`, or some other structure requring an allocation.
 
@@ -81,5 +83,5 @@ at your option.
 [¹⁰]: https://doc.redox-os.org/kernel/kernel/syscall/futex/index.html
 [¹¹]: https://nuxi.nl/blog/2016/06/22/cloudabi-futexes.html
 [¹²]: https://docs.rs/fortanix-sgx-abi/0.3.3/fortanix_sgx_abi/struct.Usercalls.html#tcs-event-queues
-[¹³]: https://github.com/WebAssembly/threads/blob/master/proposals/threads/Overview.md
+[¹³]: https://github.com/WebAssembly/threads/blob/master/proposals/threads/Overview.md#wait
 [¹⁴]: http://man.dragonflybsd.org/?command=umtx
