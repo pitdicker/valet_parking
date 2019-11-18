@@ -5,7 +5,9 @@ use core::time::Duration;
 use libc;
 
 use crate::as_u32_pub;
-use crate::futex_like::FutexLike;
+use crate::futex_like::{FutexLike, WakeupReason};
+
+use errno::errno;
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
@@ -22,19 +24,26 @@ impl FutexLike for AtomicUsize {
                 ts,
             )
         };
-        debug_assert!(r == 0 || r == -1);
+        match r {
+            0 => WakeupReason::Unknown,
+            -1 => {
+                match errno().into() {
+                    libc::EBUSY => WakeupReason::NoMatch,
+                    libc::EINTR => WakeupReason::Interrupt,
+                    libc::EWOULDBLOCK => WakeupReason::Unknown,
+                    e => panic!("Undocumented return value -1 with errno {}.", e)
+                }
+            }
+            r => panic!("Undocumented return value {}.", r)
+        }
     }
 
-    fn futex_wake(&self, new: usize) {
+    fn futex_wake(&self, new: usize) -> usize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut _;
-        let r = unsafe {
-            umtx_wakeup(
-                ptr,
-                0,
-            )
-        };
-        debug_assert!(r == 0 || r == -1);
+        let r = unsafe { umtx_wakeup(ptr, 0) };
+        assert!(r >= 0);
+        r as usize
     }
 }
 

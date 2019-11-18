@@ -5,7 +5,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::FutexLike;
+use crate::futex_like::{FutexLike, WakeupReason};
 
 // Fuchsia futex takes an `i32` to compare if the thread should be parked.
 // convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
@@ -14,20 +14,26 @@ const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32
 
 impl FutexLike for AtomicUsize {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut i32;
         let compare = (compare >> UNCOMPARED_BITS) as i32; // FIXME: is this correct?
         let deadline = convert_timeout(timeout);
         let r = unsafe { zx_futex_wait(ptr, compare, deadline) };
-        debug_assert!(r == ZX_OK || r == ZX_ERR_BAD_STATE || r == ZX_ERR_TIMED_OUT);
+        match r {
+            ZX_OK => WakeupReason::Unknown,
+            ZX_ERR_BAD_STATE => WakeupReason::NoMatch,
+            ZX_ERR_TIMED_OUT if deadline != ZX_TIME_INFINITE => WakeupReason::TimedOut,
+            r => panic!("Undocumented return value {}.", r)
+        }
     }
 
-    fn futex_wake(&self, new: usize) {
+    fn futex_wake(&self, new: usize) -> usize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut i32;
         let wake_count = u32::max_value();
         let r = unsafe { zx_futex_wake(ptr, wake_count) };
         debug_assert!(r == ZX_OK);
+        0 // FIXME: `zx_futex_wake` does not return the number of woken threads
     }
 }
 

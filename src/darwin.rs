@@ -5,31 +5,49 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::FutexLike;
+use crate::futex_like::{FutexLike, WakeupReason};
+
+use errno::errno;
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
 impl FutexLike for AtomicUsize {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut _;
         let compare = (compare >> UNCOMPARED_BITS) as u64;
         let timeout_us = convert_timeout_us(timeout);
         let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
-        debug_assert!(r == 0 || r == -1);
-        if r == -1 {
-//            debug_assert!(
-//                errno() == libc::EINTR
-//                    || errno() == libc::EAGAIN
-//                    || (timeout_us != 0 && errno() == libc::ETIMEDOUT)
-//            );
+        match r {
+            0 => WakeupReason::Unknown,
+            -1 => {
+                match errno().into() {
+                    libc::EINTR => WakeupReason::Interrupt,
+                    libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
+                    e => panic!("Undocumented return value -1 with errno {}.", e)
+                }
+            }
+            r => panic!("Undocumented return value {}.", r)
         }
     }
 
-    fn futex_wake(&self, new: usize) {
+
+    fn futex_wake(&self, new: usize) -> usize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut _;
-        let _r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
+        let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
+        if r == -1 {
+            let err: i32 = errno().into();
+            // Apparently ENOENT means there were no threads waiting.
+            // Libdispatch considers it a success, so lets do the same.
+            if err != libc::ENOENT {
+                panic!("Undocumented return value -1 with errno {}.", errno());
+            }
+            0
+        } else {
+            assert!(r >= 0);
+            r as usize
+        }
     }
 }
 
@@ -45,6 +63,8 @@ unsafe fn ulock_wait(operation: u32, addr: *mut libc::c_void, value: u64, timeou
 }
 
 // Wake_value is used to specify the thread to wake, used in combination with `ULF_WAKE_THREAD`.
+// Operation must be the same as that one used for `ulock_wait` (`UL_COMPARE_AND_WAIT`), combined
+// with a flag: 0 to wake one thread, `ULF_WAKE_ALL` to wake all waiters.
 unsafe fn ulock_wake(operation: u32, addr: *mut libc::c_void, wake_value: u64) -> libc::c_int {
     libc::syscall(SYS_ulock_wake, operation, addr, wake_value)
 }

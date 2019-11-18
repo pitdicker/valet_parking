@@ -4,10 +4,11 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::FutexLike;
+use crate::futex_like::{FutexLike, WakeupReason};
 
 use syscall::call;
-use syscall::error::{Error, EAGAIN, EFAULT, EINTR, ETIMEDOUT};
+use syscall::data::TimeSpec;
+use syscall::error::{Error, EAGAIN, EINTR, ETIMEDOUT};
 use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE};
 
 // Redox futex takes an `i32` to compare if the thread should be parked.
@@ -17,26 +18,54 @@ const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32
 
 impl FutexLike for AtomicUsize {
     #[inline]
-    fn futex_wait(&self, compare: usize, _timeout: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut i32;
         let compare = (compare >> UNCOMPARED_BITS) as u32 as i32;
-        let r = unsafe { call::futex(ptr, FUTEX_WAIT, compare, 0, ptr::null_mut()) };
+        let ts = convert_timeout(timeout);
+        let ts_ptr = ts
+            .as_ref()
+            .map(|ts_ref| ts_ref as *const _ as *mut _)
+            .unwrap_or(ptr::null_mut());
+        let r = unsafe { call::futex(ptr, FUTEX_WAIT, compare, 0, ts_ptr) };
         match r {
-            Ok(r) => debug_assert_eq!(r, 0),
+            Ok(r) => {
+                 debug_assert_eq!(r, 0);
+                 WakeupReason::Unknown
+             }
             Err(Error { errno }) => {
-                debug_assert!(errno == EINTR || errno == EAGAIN || errno == ETIMEDOUT);
+                match errno {
+                    EAGAIN => WakeupReason::NoMatch,
+                    EINTR => WakeupReason::Interrupt,
+                    ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                    e => panic!("Undocumented return value -1 with errno {}.", e)
+                }
             }
         }
     }
 
-    fn futex_wake(&self, new: usize) {
+    fn futex_wake(&self, new: usize) -> usize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut i32;
         let wake_count = i32::max_value();
         let r = unsafe { call::futex(ptr, FUTEX_WAKE, wake_count, 0, ptr::null_mut()) };
         match r {
-            Ok(num_woken) => debug_assert!(num_woken <= wake_count as usize),
-            Err(Error { errno }) => debug_assert_eq!(errno, EFAULT),
+            Ok(num_woken) => num_woken,
+            Err(Error { errno }) => panic!("Undocumented return value -1 with errno {}.", errno),
         }
+    }
+}
+
+fn convert_timeout(timeout: Option<Duration>) -> Option<TimeSpec> {
+    match timeout {
+        Some(duration) => {
+            if duration.as_secs() > i64::max_value() as u64 {
+                return None;
+            }
+            Some(TimeSpec {
+                tv_sec: duration.as_secs() as i64,
+                tv_nsec: duration.subsec_nanos() as i32,
+            })
+        }
+        None => None,
     }
 }

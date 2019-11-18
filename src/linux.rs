@@ -4,7 +4,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::FutexLike;
+use crate::futex_like::{FutexLike, WakeupReason};
+
+use errno::errno;
 
 // Linux futex takes an `i32` to compare if the thread should be parked.
 // convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
@@ -13,7 +15,7 @@ const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32
 
 impl FutexLike for AtomicUsize {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut i32;
         let compare = (compare >> UNCOMPARED_BITS) as u32 as i32;
         let ts = convert_timeout(timeout);
@@ -31,17 +33,21 @@ impl FutexLike for AtomicUsize {
                 0,
             )
         };
-        debug_assert!(r == 0 || r == -1);
-        if r == -1 {
-            debug_assert!(
-                errno() == libc::EINTR
-                    || errno() == libc::EAGAIN
-                    || (timeout.is_some() && errno() == libc::ETIMEDOUT)
-            );
+        match r {
+            0 => WakeupReason::Unknown,
+            -1 => {
+                match errno().into() {
+                    libc::EAGAIN => WakeupReason::NoMatch,
+                    libc::EINTR => WakeupReason::Interrupt,
+                    libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                    e => panic!("Undocumented return value -1 with errno {}.", e)
+                }
+            }
+            r => panic!("Undocumented return value {}.", r)
         }
     }
 
-    fn futex_wake(&self, new: usize) {
+    fn futex_wake(&self, new: usize) -> usize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut i32;
         let wake_count = i32::max_value();
@@ -55,21 +61,8 @@ impl FutexLike for AtomicUsize {
                 0,
             )
         };
-        debug_assert!((r >= 0 && r <= wake_count as libc::c_long) || r == -1);
-        if r == -1 {
-            debug_assert_eq!(errno(), libc::EFAULT);
-        }
-    }
-}
-
-fn errno() -> libc::c_int {
-    #[cfg(target_os = "linux")]
-    unsafe {
-        *libc::__errno_location()
-    }
-    #[cfg(target_os = "android")]
-    unsafe {
-        *libc::__errno()
+        assert!(r >= 0);
+        r as usize
     }
 }
 

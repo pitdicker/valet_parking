@@ -5,7 +5,9 @@ use core::time::Duration;
 use libc;
 
 use crate::as_u32_pub;
-use crate::futex_like::FutexLike;
+use crate::futex_like::{FutexLike, WakeupReason};
+
+use errno::errno;
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
@@ -18,7 +20,7 @@ use crate::futex_like::FutexLike;
 
 impl FutexLike for AtomicUsize {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut _;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
@@ -34,10 +36,20 @@ impl FutexLike for AtomicUsize {
                 ts_ptr,
             )
         };
-        debug_assert!(r == 0 || r == -1);
+        match r {
+            0 => WakeupReason::Unknown, // Can be NoMatch, WokenUp and Spurious
+            -1 => {
+                match errno().into() {
+                    libc::EINTR => WakeupReason::Interrupt,
+                    libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                    e => panic!("Undocumented return value -1 with errno {}.", e)
+                }
+            }
+            r => panic!("Undocumented return value {}.", r)
+        }
     }
 
-    fn futex_wake(&self, new: usize) {
+    fn futex_wake(&self, new: usize) -> usize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut _;
         let wake_count = libc::INT_MAX as libc::c_long;
@@ -50,7 +62,8 @@ impl FutexLike for AtomicUsize {
                 ptr::null_mut(),
             )
         };
-        debug_assert!(r == 0 || r == -1);
+        assert!(r >= 0);
+        r as usize
     }
 }
 

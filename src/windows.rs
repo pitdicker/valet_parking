@@ -7,19 +7,21 @@ use core::sync::atomic::{spin_loop_hint, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use winapi::shared::basetsd::SIZE_T;
-use winapi::shared::minwindef::{BOOL, DWORD, TRUE, ULONG};
-use winapi::shared::ntdef::NTSTATUS;
+use winapi::shared::minwindef::{BOOL, DWORD, TRUE as BOOL_TRUE, FALSE as BOOL_FALSE, ULONG};
+use winapi::shared::winerror::ERROR_TIMEOUT;
+use winapi::shared::ntdef::{FALSE as BOOLEAN_FALSE, NTSTATUS};
 use winapi::shared::ntstatus::{STATUS_ALERTED, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_USER_APC};
+use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::{
     ACCESS_MASK, BOOLEAN, GENERIC_READ, GENERIC_WRITE, HANDLE, LPCSTR, PHANDLE, PVOID,
 };
 
-use crate::futex_like::{FutexLike, COUNTER_MASK};
+use crate::futex_like::{FutexLike, COUNTER_MASK, WakeupReason};
 
 impl FutexLike for AtomicUsize {
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         match BACKEND.get() {
             Backend::Wait(f) => {
                 let address = self as *const _ as PVOID;
@@ -27,7 +29,15 @@ impl FutexLike for AtomicUsize {
                 let ms = convert_timeout_ms(timeout);
                 let r =
                     (f.WaitOnAddress)(address, compare_address, mem::size_of::<AtomicUsize>(), ms);
-                debug_assert!(r == TRUE);
+                match r {
+                    BOOL_TRUE => WakeupReason::Unknown, // Can be any reason except TimedOut
+                    BOOL_FALSE | _ => {
+                        match unsafe { GetLastError() } {
+                            ERROR_TIMEOUT if ms != INFINITE => WakeupReason::TimedOut,
+                            r => panic!("Undocumented return value {}.", r),
+                        }
+                    }
+                }
             }
             Backend::Keyed(f) => {
                 // Register the number of threads waiting. In theory we should be careful not to
@@ -37,7 +47,7 @@ impl FutexLike for AtomicUsize {
                 let mut current = self.load(Ordering::Relaxed);
                 loop {
                     if current & !COUNTER_MASK != compare {
-                        return;
+                        return WakeupReason::NoMatch;
                     }
                     let old = self.compare_and_swap(current, current + 1, Ordering::Relaxed);
                     if old == current {
@@ -53,27 +63,27 @@ impl FutexLike for AtomicUsize {
                 let timeout_ptr = nt_timeout
                     .map(|t_ref| t_ref as *mut _)
                     .unwrap_or(ptr::null_mut());
-                let r = (f.NtWaitForKeyedEvent)(f.handle, key, 0, timeout_ptr);
+                let r = (f.NtWaitForKeyedEvent)(f.handle, key, BOOLEAN_FALSE, timeout_ptr);
                 // `NtWaitForKeyedEvent` is an undocumented API where we don't known the possible
-                // return values are unknown, but they are probably similar to
-                // `NtWaitForSingleObject`.
-                if r == STATUS_SUCCESS {
-                    debug_assert!(
-                        r == STATUS_ALERTED
-                            || r == STATUS_USER_APC
-                            || (nt_timeout.is_some() && r == STATUS_TIMEOUT)
-                    );
+                // return values, but they are probably similar to `NtWaitForSingleObject`.
+                match r {
+                    STATUS_SUCCESS => WakeupReason::Unknown,
+                    STATUS_TIMEOUT if nt_timeout.is_some() => WakeupReason::TimedOut,
+                    STATUS_ALERTED |
+                    STATUS_USER_APC => WakeupReason::Interrupt,
+                    r => panic!("Undocumented return value {}.", r)
                 }
             }
             Backend::None => unreachable!(),
         }
     }
 
-    fn futex_wake(&self, new: usize) {
+    fn futex_wake(&self, new: usize) -> usize {
         let current = self.swap(new, Ordering::SeqCst);
         match BACKEND.get() {
             Backend::Wait(f) => {
                 (f.WakeByAddressAll)(self as *const _ as PVOID);
+                0 // `WakeByAddressAll` does not return the number of woken threads
             }
             Backend::Keyed(f) => {
                 let wake_count = current & COUNTER_MASK;
@@ -83,7 +93,8 @@ impl FutexLike for AtomicUsize {
                 // parked we will block indefinitely.
                 for _ in 0..wake_count {
                     (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
-                }
+                };
+                wake_count
             }
             Backend::None => unreachable!(),
         }

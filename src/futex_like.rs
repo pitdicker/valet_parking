@@ -3,6 +3,22 @@ use core::time::Duration;
 
 use crate::{Parker, Waiters, RESERVED_BITS, RESERVED_MASK};
 
+/// Reason the operating system provided for waking up a thread. Because of the limited guarantees
+/// of some platforms, this turns out not to be all that useful except for documentation purposes.
+#[allow(dead_code)]
+pub(crate) enum WakeupReason {
+    /// Thread did not get parked, because the compare value did not match.
+    /// Not all operating systems report this case.
+    NoMatch,
+    /// Thread got woken up because its timeout expired.
+    /// Only DragonFly BSD does not report this reliably.
+    TimedOut,
+    /// Thread got woken up because of an interrupt.
+    Interrupt,
+    /// Thread may be woken up by a `futex_wake` call, but it may also have been for other reasons.
+    Unknown,
+}
+
 pub(crate) trait FutexLike {
     // Park the current thread if `self` equals `compare`. Most implementations will only compare
     // the 32 high-order bits.
@@ -10,7 +26,7 @@ pub(crate) trait FutexLike {
     // `timeout` is relative duration, not an absolute deadline.
     //
     // This function does not guard against spurious wakeups.
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>);
+    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason;
 
     // Wake all threads waiting on `self`, and set `self` to `new`.
     //
@@ -21,7 +37,7 @@ pub(crate) trait FutexLike {
     //
     // We don't support waking n out of m waiting threads. This gets into pretty advanced use cases,
     // and it is not clear this can be supported cross-platform and without too much overhead.
-    fn futex_wake(&self, new: usize);
+    fn futex_wake(&self, new: usize) -> usize;
 }
 
 // Layout of the atomic:
