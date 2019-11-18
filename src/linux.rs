@@ -4,9 +4,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
+use crate::errno::errno;
 use crate::futex_like::{FutexLike, WakeupReason};
-
-use errno::errno;
 
 // Linux futex takes an `i32` to compare if the thread should be parked.
 // convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
@@ -36,7 +35,7 @@ impl FutexLike for AtomicUsize {
         match r {
             0 => WakeupReason::Unknown,
             -1 => {
-                match errno().into() {
+                match errno() {
                     libc::EAGAIN => WakeupReason::NoMatch,
                     libc::EINTR => WakeupReason::Interrupt,
                     libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,

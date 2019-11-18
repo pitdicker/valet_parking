@@ -41,6 +41,9 @@ cfg_if! {
     }
 }
 
+#[cfg(unix)]
+mod errno;
+
 // Multiple threads can wait on a single `AtomicUsize` until one thread wakes them all up at once.
 pub trait Waiters {
     /// Park the current thread. Reparks after a spurious wakeup.

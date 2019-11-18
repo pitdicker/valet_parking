@@ -5,9 +5,8 @@ use core::time::Duration;
 use libc;
 
 use crate::as_u32_pub;
+use crate::errno::errno;
 use crate::futex_like::{FutexLike, WakeupReason};
-
-use errno::errno;
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
@@ -27,7 +26,7 @@ impl FutexLike for AtomicUsize {
         match r {
             0 => WakeupReason::Unknown,
             -1 => {
-                match errno().into() {
+                match errno() {
                     libc::EBUSY => WakeupReason::NoMatch,
                     libc::EINTR => WakeupReason::Interrupt,
                     libc::EWOULDBLOCK => WakeupReason::Unknown,

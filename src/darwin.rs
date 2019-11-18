@@ -5,9 +5,8 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
+use crate::errno::errno;
 use crate::futex_like::{FutexLike, WakeupReason};
-
-use errno::errno;
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
@@ -37,7 +36,7 @@ impl FutexLike for AtomicUsize {
         let ptr = as_u32_pub(self) as *mut _;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
         if r == -1 {
-            let err: i32 = errno().into();
+            let err = errno();
             // Apparently ENOENT means there were no threads waiting.
             // Libdispatch considers it a success, so lets do the same.
             if err != libc::ENOENT {

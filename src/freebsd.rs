@@ -5,9 +5,8 @@ use core::time::Duration;
 use libc;
 
 use crate::as_u32_pub;
+use crate::errno::errno;
 use crate::futex_like::{FutexLike, WakeupReason};
-
-use errno::errno;
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
@@ -39,7 +38,7 @@ impl FutexLike for AtomicUsize {
         match r {
             0 => WakeupReason::Unknown, // Can be NoMatch, WokenUp and Spurious
             -1 => {
-                match errno().into() {
+                match errno() {
                     libc::EINTR => WakeupReason::Interrupt,
                     libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
                     e => panic!("Undocumented return value -1 with errno {}.", e)

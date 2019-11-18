@@ -6,8 +6,6 @@ use core::time::Duration;
 use crate::as_u32_pub;
 use crate::futex_like::{FutexLike, WakeupReason};
 
-use errno::errno;
-
 // OpenBSD futex takes an `i32` to compare if the thread should be parked.
 // convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
 // containing the non-reserved bits.
