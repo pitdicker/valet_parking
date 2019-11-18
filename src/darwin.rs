@@ -17,16 +17,17 @@ impl FutexLike for AtomicUsize {
         let compare = (compare >> UNCOMPARED_BITS) as u64;
         let timeout_us = convert_timeout_us(timeout);
         let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
-        match r {
-            0 => WakeupReason::Unknown,
-            -1 => {
-                match errno().into() {
-                    libc::EINTR => WakeupReason::Interrupt,
-                    libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
-                    e => panic!("Undocumented return value -1 with errno {}.", e)
-                }
+        if r >= 0 {
+            // r is the number of threads waiting.
+            WakeupReason::Unknown
+        } else if r == -1 {
+            match errno() {
+                libc::EINTR => WakeupReason::Interrupt,
+                libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
+                e => panic!("Undocumented return value -1 with errno {}.", e)
             }
-            r => panic!("Undocumented return value {}.", r)
+        } else {
+            panic!("Undocumented return value {}.", r)
         }
     }
 
@@ -35,18 +36,12 @@ impl FutexLike for AtomicUsize {
         self.store(new, Ordering::SeqCst);
         let ptr = as_u32_pub(self) as *mut _;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
-        if r == -1 {
-            let err = errno();
+        if r == 0 || (r == -1 && errno() == libc::ENOENT) {
             // Apparently ENOENT means there were no threads waiting.
             // Libdispatch considers it a success, so lets do the same.
-            if err != libc::ENOENT {
-                panic!("Undocumented return value -1 with errno {}.", errno());
-            }
-            0
-        } else {
-            assert!(r >= 0);
-            r as usize
+            return 0; // `ulock_wake` does not return the number of woken threads.
         }
+        panic!("Undocumented return value {} with errno {}.", r, errno());
     }
 }
 
