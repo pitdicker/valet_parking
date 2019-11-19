@@ -6,7 +6,7 @@ use libc;
 
 use crate::as_u32_pub;
 use crate::errno::errno;
-use crate::futex_like::{FutexLike, WakeupReason};
+use crate::futex::{Futex, WakeupReason};
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
@@ -17,7 +17,7 @@ use crate::futex_like::{FutexLike, WakeupReason};
 // In the same way the number of threads to wake is tricky: the value is an usize, but is does not
 // accept values outside the i32 range.
 
-impl FutexLike for AtomicUsize {
+impl Futex for AtomicUsize {
     #[inline]
     fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut _;

@@ -2,7 +2,10 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use crate::{Parker, FREE_BITS, RESERVED_MASK};
+use crate::{FREE_BITS, RESERVED_MASK};
+use crate::waiter_queue;
+
+pub(crate) use waiter_queue::{compare_and_wait, store_and_wake};
 
 // `UnsafeCell` because Posix needs mutable references to these types.
 #[repr(align(64))]
@@ -27,90 +30,88 @@ pub struct PosixParker {
 const NOTIFY_BIT: usize = 1;
 const PTR_BITS: usize = RESERVED_MASK ^ NOTIFY_BIT;
 
-impl Parker for AtomicUsize {
-    // Returns false if the wakeup was because of the timeout, or spurious.
-    fn park(&self, timeout: Option<Duration>) {
-        let parker = PosixParker {
-            mutex: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER),
-            condvar: UnsafeCell::new(libc::PTHREAD_COND_INITIALIZER),
-        };
-        let ptr = (&parker as *const PosixParker as usize) >> FREE_BITS;
+// Returns false if the wakeup was because of the timeout, or spurious.
+pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
+    let parker = PosixParker {
+        mutex: UnsafeCell::new(libc::PTHREAD_MUTEX_INITIALIZER),
+        condvar: UnsafeCell::new(libc::PTHREAD_COND_INITIALIZER),
+    };
+    let ptr = (&parker as *const PosixParker as usize) >> FREE_BITS;
 
-        let ts = convert_timeout(timeout);
+    let ts = convert_timeout(timeout);
 
-        unsafe {
-            // Lock the mutex before making a pointer to `parker` available to other threads.
-            let r = libc::pthread_mutex_lock(parker.mutex.get());
-            debug_assert_eq!(r, 0);
+    unsafe {
+        // Lock the mutex before making a pointer to `parker` available to other threads.
+        let r = libc::pthread_mutex_lock(parker.mutex.get());
+        debug_assert_eq!(r, 0);
 
-            let mut current = self.load(Ordering::SeqCst);
-            let mut res = true;
-            loop {
-                // If the old state had its `NOTIFY_BIT` set, some other thread unparked us even
-                // before we were able to park ourselves. Then stop trying to park ourselves and
-                // clean up.
-                if current & RESERVED_MASK == NOTIFY_BIT {
-                    break;
-                }
-
-                let old = self.compare_and_swap(current, current | ptr, Ordering::SeqCst);
-                if old != current {
-                    current = old;
-                    continue;
-                }
-
-                if let Some(timeout) = ts {
-                    res = condvar_wait_timed(self, &parker, &timeout);
-                } else {
-                    condvar_wait(self, &parker);
-                }
+        let mut current = atomic.load(Ordering::SeqCst);
+        let mut res = true;
+        loop {
+            // If the old state had its `NOTIFY_BIT` set, some other thread unparked us even
+            // before we were able to park ourselves. Then stop trying to park ourselves and
+            // clean up.
+            if current & RESERVED_MASK == NOTIFY_BIT {
                 break;
             }
 
-            // Done, clean up.
-            let r = libc::pthread_mutex_unlock(parker.mutex.get());
-            debug_assert_eq!(r, 0);
-            let r = libc::pthread_mutex_destroy(parker.mutex.get());
-            debug_assert_eq!(r, 0);
-            let r = libc::pthread_cond_destroy(parker.condvar.get());
-            debug_assert_eq!(r, 0);
-            self.fetch_and(!NOTIFY_BIT, Ordering::SeqCst);
-            res; // FIXME: returned bool in previous version
-        }
-    }
+            let old = atomic.compare_and_swap(current, current | ptr, Ordering::SeqCst);
+            if old != current {
+                current = old;
+                continue;
+            }
 
-    unsafe fn unpark(&self) {
-        let old = self.fetch_or(NOTIFY_BIT, Ordering::SeqCst);
-        match (old & PTR_BITS, old & NOTIFY_BIT == NOTIFY_BIT) {
-            (_, true) => {
-                // Some other thread must be in the process of unparking the suspended thread.
-                // There is nothing for us to do.
-                return;
+            if let Some(timeout) = ts {
+                res = condvar_wait_timed(atomic, &parker, &timeout);
+            } else {
+                condvar_wait(atomic, &parker);
             }
-            (0, false) => {
-                // There is no thread to wake up, maybe it didn't even get to parking itself yet.
-                return;
-            }
-            (_, false) => {} // Good to go.
+            break;
         }
 
-        // The parked thread will not return from `self.park` while `NOTIFY_BIT` and a pointer is
-        // set, so we can safely access data on its stack through the pointer encoded in `self`.
-        let ptr = ((old & PTR_BITS) << FREE_BITS) as *const PosixParker;
-
-        // Lock a mutex, set the signal, and release the mutex.
-        // The parked thread will be woken up after releasing the mutex.
-        // While holding the lock also clear the pointer part of `self`, so the unparked thread
-        // knows this is not a spurious wakeup (that just happened to happen while we already set
-        // the `NOTIFY_BIT` and were about to wake it up).
-        let r = libc::pthread_mutex_lock((*ptr).mutex.get());
+        // Done, clean up.
+        let r = libc::pthread_mutex_unlock(parker.mutex.get());
         debug_assert_eq!(r, 0);
-        self.fetch_and(!PTR_BITS, Ordering::SeqCst);
-        let r = libc::pthread_cond_signal((*ptr).condvar.get());
+        let r = libc::pthread_mutex_destroy(parker.mutex.get());
         debug_assert_eq!(r, 0);
-        let r = libc::pthread_mutex_unlock((*ptr).mutex.get());
+        let r = libc::pthread_cond_destroy(parker.condvar.get());
         debug_assert_eq!(r, 0);
+        atomic.fetch_and(!NOTIFY_BIT, Ordering::SeqCst);
+        res; // FIXME: returned bool in previous version
     }
+}
+
+pub(crate) unsafe fn unpark(atomic: &AtomicUsize) {
+    let old = atomic.fetch_or(NOTIFY_BIT, Ordering::SeqCst);
+    match (old & PTR_BITS, old & NOTIFY_BIT == NOTIFY_BIT) {
+        (_, true) => {
+            // Some other thread must be in the process of unparking the suspended thread.
+            // There is nothing for us to do.
+            return;
+        }
+        (0, false) => {
+            // There is no thread to wake up, maybe it didn't even get to parking itself yet.
+            return;
+        }
+        (_, false) => {} // Good to go.
+    }
+
+    // The parked thread will not return from `self.park` while `NOTIFY_BIT` and a pointer is
+    // set, so we can safely access data on its stack through the pointer encoded in `self`.
+    let ptr = ((old & PTR_BITS) << FREE_BITS) as *const PosixParker;
+
+    // Lock a mutex, set the signal, and release the mutex.
+    // The parked thread will be woken up after releasing the mutex.
+    // While holding the lock also clear the pointer part of `self`, so the unparked thread
+    // knows this is not a spurious wakeup (that just happened to happen while we already set
+    // the `NOTIFY_BIT` and were about to wake it up).
+    let r = libc::pthread_mutex_lock((*ptr).mutex.get());
+    debug_assert_eq!(r, 0);
+    atomic.fetch_and(!PTR_BITS, Ordering::SeqCst);
+    let r = libc::pthread_cond_signal((*ptr).condvar.get());
+    debug_assert_eq!(r, 0);
+    let r = libc::pthread_mutex_unlock((*ptr).mutex.get());
+    debug_assert_eq!(r, 0);
 }
 
 fn condvar_wait(atomic: &AtomicUsize, parker: &PosixParker) {

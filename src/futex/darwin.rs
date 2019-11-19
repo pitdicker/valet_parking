@@ -1,3 +1,5 @@
+//! Use the undocumented `ulock_wait` and `ulock_wake` syscalls that are available since
+//! MacOS 10.12 Sierra (Darwin 16.0).
 #![allow(non_upper_case_globals)]
 
 use core::mem;
@@ -6,11 +8,11 @@ use core::time::Duration;
 
 use crate::as_u32_pub;
 use crate::errno::errno;
-use crate::futex_like::{FutexLike, WakeupReason};
+use crate::futex::{Futex, WakeupReason};
 
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
-impl FutexLike for AtomicUsize {
+impl Futex for AtomicUsize {
     #[inline]
     fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut _;

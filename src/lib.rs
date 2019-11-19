@@ -5,44 +5,66 @@ use core::mem;
 use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
 
-use cfg_if::cfg_if;
+// All platforms that have some futex-like interface
+#[cfg(any(target_os = "android",
+              target_os = "dragonfly",
+              target_os = "freebsd",
+              target_os = "fuchsia",
+              target_os = "linux",
+              target_os = "ios",
+              target_os = "macos",
+              target_os = "openbsd",
+              target_os = "redox",
+              windows))]
+pub mod futex;
 
-cfg_if! {
-    if #[cfg(all(unix, feature = "posix"))] {
-        mod posix;
-        mod waiter_queue;
-    } else if #[cfg(any(target_os = "linux", target_os = "android"))] {
-        mod linux;
-        mod futex_like;
-    } else if #[cfg(target_os = "freebsd")] {
-        mod freebsd;
-        mod futex_like;
-    } else if #[cfg(target_os = "redox")] {
-        mod redox;
-        mod futex_like;
-    } else if #[cfg(target_os = "fuchsia")] {
-        mod fuchsia;
-        mod futex_like;
-    } else if #[cfg(any(target_os = "macos", target_os = "ios"))] {
-        mod darwin;
-        mod futex_like;
-    } else if #[cfg(target_os = "openbsd")] {
-        mod openbsd;
-        mod futex_like;
-    } else if #[cfg(target_os = "dragonfly")] {
-        mod dragonfly;
-        mod futex_like;
-    } else if #[cfg(unix)] {
-        mod posix;
-        mod waiter_queue;
-    } else if #[cfg(windows)] {
-        mod windows;
-        mod futex_like;
-    }
-}
+// All platforms for which the futex interface is always available.
+#[cfg(all(any(target_os = "android",
+              target_os = "dragonfly",
+              target_os = "freebsd",
+              target_os = "fuchsia",
+              target_os = "linux",
+              target_os = "openbsd",
+              target_os = "redox"),
+          not(feature = "fallback")))]
+use futex as imp;
+
+// Windows needs a fallback.
+#[cfg(windows)]
+mod windows;
+#[cfg(windows)]
+use windows as imp;
 
 #[cfg(unix)]
 mod errno;
+
+#[cfg(all(any(target_os = "macos", target_os="ios"),
+          not(feature = "fallback")))]
+mod darwin;
+
+#[cfg(all(any(target_os = "macos", target_os="ios"),
+          not(feature = "fallback")))]
+use darwin as imp;
+
+#[cfg(unix)]
+#[allow(unused)]
+mod posix;
+
+#[cfg(all(unix,
+          any(not(any(target_os = "android",
+                      target_os = "dragonfly",
+                      target_os = "freebsd",
+                      target_os = "fuchsia",
+                      target_os = "linux",
+                      target_os = "ios",
+                      target_os = "macos",
+                      target_os = "openbsd",
+                      target_os = "redox")),
+              feature = "fallback")))]
+use posix as imp;
+
+#[allow(unused)]
+mod waiter_queue;
 
 // Multiple threads can wait on a single `AtomicUsize` until one thread wakes them all up at once.
 pub trait Waiters {
@@ -68,6 +90,20 @@ pub trait Waiters {
     /// may fail to wake threads, or even dereference dangling pointers.
     unsafe fn store_and_wake(&self, new: usize);
 }
+
+impl Waiters for AtomicUsize {
+    fn compare_and_wait(&self, compare: usize) {
+        imp::compare_and_wait(self, compare)
+    }
+
+    unsafe fn store_and_wake(&self, new: usize) {
+        imp::store_and_wake(self, new)
+    }
+}
+
+
+
+
 
 /// One thread parkes itself on an `AtomicUsize`, and multiple threads or a timeout are able to wake
 /// it up.
@@ -100,6 +136,16 @@ pub trait Parker {
     /// If any of the reserved bits where changed while there whas a thread parked, this function
     /// may fail to unpark it, or may even dereference a dangling pointer.
     unsafe fn unpark(&self);
+}
+
+impl Parker for AtomicUsize {
+    fn park(&self, timeout: Option<Duration>) {
+        imp::park(self, timeout)
+    }
+
+    unsafe fn unpark(&self) {
+        imp::unpark(self)
+    }
 }
 
 pub const FREE_BITS: usize = 5;

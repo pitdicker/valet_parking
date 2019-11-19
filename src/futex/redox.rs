@@ -4,7 +4,7 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
 use crate::as_u32_pub;
-use crate::futex_like::{FutexLike, WakeupReason};
+use crate::futex::{Futex, WakeupReason};
 
 use syscall::call;
 use syscall::data::TimeSpec;
@@ -16,7 +16,7 @@ use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE};
 // containing the non-reserved bits.
 const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
-impl FutexLike for AtomicUsize {
+impl Futex for AtomicUsize {
     #[inline]
     fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         let ptr = as_u32_pub(self) as *mut i32;
