@@ -63,7 +63,12 @@ pub(crate) trait Futex {
 const HAS_WAITERS: usize = 0x1;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
     loop {
-        match atomic.compare_exchange_weak(compare, compare | HAS_WAITERS, Ordering::Relaxed, Ordering::Relaxed) {
+        match atomic.compare_exchange_weak(
+            compare,
+            compare | HAS_WAITERS,
+            Ordering::Relaxed,
+            Ordering::Relaxed,
+        ) {
             Ok(_) => break,
             Err(current) => {
                 if current & !RESERVED_MASK != compare {

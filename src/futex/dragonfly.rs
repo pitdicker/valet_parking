@@ -17,13 +17,7 @@ impl Futex for AtomicUsize {
         let ptr = as_u32_pub(self) as *mut _;
         let compare = (compare >> UNCOMPARED_BITS) as libc::c_int;
         let ts = convert_timeout_us(timeout);
-        let r = unsafe {
-            umtx_sleep(
-                ptr,
-                compare,
-                ts,
-            )
-        };
+        let r = unsafe { umtx_sleep(ptr, compare, ts) };
         match r {
             0 => WakeupReason::Unknown,
             -1 => match errno() {
@@ -59,17 +53,17 @@ impl Futex for AtomicUsize {
     }
 }
 
-extern {
+extern "C" {
     fn umtx_sleep(
         uaddr: *const libc::c_int,
         val: libc::c_int,
         timeout: libc::c_int, // microseconds, 0 is indefinite
-        ) -> libc::c_int;
-     
+    ) -> libc::c_int;
+
     fn umtx_wakeup(
         uaddr: *const libc::c_int,
         count: libc::c_int, // 0 will wake up all
-        ) -> libc::c_int;
+    ) -> libc::c_int;
 }
 
 // Timeout in microseconds, round nanosecond values up to microseconds.

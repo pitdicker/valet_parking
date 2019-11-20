@@ -70,19 +70,14 @@ const ZX_ERR_TIMED_OUT: zx_status_t = -21;
 const ZX_TIME_INFINITE: zx_time_t = u64::max_value();
 
 #[link(name = "zircon")]
-extern {
-    fn zx_deadline_after(
-        nanoseconds: zx_duration_t
-        ) -> zx_time_t;
+extern "C" {
+    fn zx_deadline_after(nanoseconds: zx_duration_t) -> zx_time_t;
 
     fn zx_futex_wait(
         value_ptr: *mut zx_futex_t,
         current_value: zx_futex_t,
-        deadline: zx_time_t
-        ) -> zx_status_t;
+        deadline: zx_time_t,
+    ) -> zx_status_t;
 
-    fn zx_futex_wake(
-        value_ptr: *const zx_futex_t,
-        count: u32
-        ) -> zx_status_t;
+    fn zx_futex_wake(value_ptr: *const zx_futex_t, count: u32) -> zx_status_t;
 }

@@ -1,7 +1,5 @@
 //! Use the undocumented `ulock_wait` and `ulock_wake` syscalls that are available since
 //! MacOS 10.12 Sierra (Darwin 16.0).
-#![allow(non_upper_case_globals)]
-
 use core::mem;
 use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
@@ -61,12 +59,19 @@ impl Futex for AtomicUsize {
 
 const UL_COMPARE_AND_WAIT: u32 = 1;
 const ULF_WAKE_ALL: u32 = 0x100;
+#[allow(non_upper_case_globals)]
 const SYS_ulock_wait: libc::c_int = 515;
+#[allow(non_upper_case_globals)]
 const SYS_ulock_wake: libc::c_int = 516;
 
 // Only 32 bits of `addr` and `value` are used for comparison.
 // `timeout` is specified in microseconds, with 0 for infinite.
-unsafe fn ulock_wait(operation: u32, addr: *mut libc::c_void, value: u64, timeout: u32) -> libc::c_int {
+unsafe fn ulock_wait(
+    operation: u32,
+    addr: *mut libc::c_void,
+    value: u64,
+    timeout: u32,
+) -> libc::c_int {
     libc::syscall(SYS_ulock_wait, operation, addr, value, timeout)
 }
 

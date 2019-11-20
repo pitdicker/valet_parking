@@ -331,7 +331,9 @@ fn ProbeWaitAddress() -> Option<WaitAddress> {
 }
 
 #[cfg(feature = "fallback")]
-fn ProbeWaitAddress() -> Option<WaitAddress> { None }
+fn ProbeWaitAddress() -> Option<WaitAddress> {
+    None
+}
 
 fn ProbeKeyedEvent() -> Option<KeyedEvent> {
     unsafe {

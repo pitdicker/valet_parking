@@ -6,27 +6,33 @@ use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
 
 // All platforms that have some futex-like interface
-#[cfg(any(target_os = "android",
-              target_os = "dragonfly",
-              target_os = "freebsd",
-              target_os = "fuchsia",
-              target_os = "linux",
-              target_os = "ios",
-              target_os = "macos",
-              target_os = "openbsd",
-              target_os = "redox",
-              windows))]
+#[cfg(any(
+    target_os = "android",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "fuchsia",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "macos",
+    target_os = "openbsd",
+    target_os = "redox",
+    windows
+))]
 pub mod futex;
 
 // All platforms for which the futex interface is always available.
-#[cfg(all(any(target_os = "android",
-              target_os = "dragonfly",
-              target_os = "freebsd",
-              target_os = "fuchsia",
-              target_os = "linux",
-              target_os = "openbsd",
-              target_os = "redox"),
-          not(feature = "fallback")))]
+#[cfg(all(
+    any(
+        target_os = "android",
+        target_os = "dragonfly",
+        target_os = "freebsd",
+        target_os = "fuchsia",
+        target_os = "linux",
+        target_os = "openbsd",
+        target_os = "redox"
+    ),
+    not(feature = "fallback")
+))]
 use futex as imp;
 
 // Windows needs a fallback.
@@ -38,6 +44,7 @@ use windows as imp;
 #[cfg(unix)]
 mod errno;
 
+/*
 #[cfg(all(any(target_os = "macos", target_os="ios"),
           not(feature = "fallback")))]
 mod darwin;
@@ -45,22 +52,29 @@ mod darwin;
 #[cfg(all(any(target_os = "macos", target_os="ios"),
           not(feature = "fallback")))]
 use darwin as imp;
+*/
 
 #[cfg(unix)]
 #[allow(unused)]
 mod posix;
 
-#[cfg(all(unix,
-          any(not(any(target_os = "android",
-                      target_os = "dragonfly",
-                      target_os = "freebsd",
-                      target_os = "fuchsia",
-                      target_os = "linux",
-                      target_os = "ios",
-                      target_os = "macos",
-                      target_os = "openbsd",
-                      target_os = "redox")),
-              feature = "fallback")))]
+#[cfg(all(
+    unix,
+    any(
+        not(any(
+            target_os = "android",
+            target_os = "dragonfly",
+            target_os = "freebsd",
+            target_os = "fuchsia",
+            target_os = "linux",
+            target_os = "ios",
+            target_os = "macos",
+            target_os = "openbsd",
+            target_os = "redox"
+        )),
+        feature = "fallback"
+    )
+))]
 use posix as imp;
 
 #[allow(unused)]
@@ -100,10 +114,6 @@ impl Waiters for AtomicUsize {
         imp::store_and_wake(self, new)
     }
 }
-
-
-
-
 
 /// One thread parkes itself on an `AtomicUsize`, and multiple threads or a timeout are able to wake
 /// it up.
