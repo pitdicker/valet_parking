@@ -54,7 +54,7 @@ pub(crate) trait Futex {
     ///
     /// We don't support waking n out of m waiting threads. This gets into pretty advanced use cases,
     /// and it is not clear this can be supported cross-platform and without too much overhead.
-    fn futex_wake(&self, new: usize) -> usize;
+    fn futex_wake(&self) -> usize;
 }
 
 //
@@ -83,7 +83,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
 
 pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     if atomic.swap(new, Ordering::SeqCst) & HAS_WAITERS == HAS_WAITERS {
-        atomic.futex_wake(new);
+        atomic.futex_wake();
     }
 }
 
@@ -163,5 +163,5 @@ pub(crate) fn unpark(atomic: &AtomicUsize) {
         // nothing for us to do.
         return;
     }
-    atomic.futex_wake(NOTIFIED);
+    atomic.futex_wake();
 }

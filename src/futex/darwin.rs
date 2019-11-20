@@ -3,7 +3,7 @@
 #![allow(non_upper_case_globals)]
 
 use core::mem;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
 
 use crate::as_u32_pub;
@@ -33,9 +33,8 @@ impl Futex for AtomicUsize {
         }
     }
 
-
-    fn futex_wake(&self, new: usize) -> usize {
-        self.store(new, Ordering::SeqCst);
+    #[inline]
+    fn futex_wake(&self) -> usize {
         let ptr = as_u32_pub(self) as *mut _;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
         if r == 0 || (r == -1 && errno() == libc::ENOENT) {

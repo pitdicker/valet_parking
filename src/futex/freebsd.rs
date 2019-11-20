@@ -1,5 +1,5 @@
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
 
 use libc;
@@ -48,8 +48,8 @@ impl Futex for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, new: usize) -> usize {
-        self.store(new, Ordering::SeqCst);
+    #[inline]
+    fn futex_wake(&self) -> usize {
         let ptr = as_u32_pub(self) as *mut _;
         let wake_count = libc::INT_MAX as libc::c_long;
         let r = unsafe {

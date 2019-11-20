@@ -1,6 +1,6 @@
 use core::mem;
 use core::ptr;
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::sync::atomic::AtomicUsize;
 use core::time::Duration;
 
 use crate::as_u32_pub;
@@ -40,8 +40,8 @@ impl Futex for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, new: usize) -> usize {
-        self.store(new, Ordering::SeqCst);
+    #[inline]
+    fn futex_wake(&self) -> usize {
         let ptr = as_u32_pub(self) as *mut u32;
         let wake_count = i32::max_value();
         let r = unsafe {

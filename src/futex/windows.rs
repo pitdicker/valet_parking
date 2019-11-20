@@ -3,7 +3,7 @@
 use core::cell::Cell;
 use core::mem;
 use core::ptr;
-use core::sync::atomic::{spin_loop_hint, AtomicUsize, Ordering};
+use core::sync::atomic::{spin_loop_hint, AtomicUsize};
 use core::time::Duration;
 
 use winapi::shared::basetsd::SIZE_T;
@@ -21,6 +21,7 @@ use winapi::um::winnt::{
 use crate::futex::{Futex, COUNTER_MASK, WakeupReason};
 
 impl Futex for AtomicUsize {
+    #[inline]
     fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
         if let Wait(f) = BACKEND.get() {
             let address = self as *const _ as PVOID;
@@ -42,7 +43,8 @@ impl Futex for AtomicUsize {
         }
     }
 
-    fn futex_wake(&self, new: usize) -> usize {
+    #[inline]
+    fn futex_wake(&self) -> usize {
         if let Wait(f) = BACKEND.get() {
             (f.WakeByAddressAll)(self as *const _ as PVOID);
             0 // `WakeByAddressAll` does not return the number of woken threads
