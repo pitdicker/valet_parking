@@ -25,9 +25,7 @@ use winapi::shared::minwindef::{BOOL, DWORD, ULONG};
 use winapi::shared::ntdef::{FALSE, NTSTATUS};
 use winapi::shared::ntstatus::{STATUS_ALERTED, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_USER_APC};
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
-use winapi::um::winnt::{
-    ACCESS_MASK, BOOLEAN, GENERIC_READ, GENERIC_WRITE, HANDLE, LPCSTR, PHANDLE, PVOID,
-};
+use winapi::um::winnt::{ACCESS_MASK, BOOLEAN, EVENT_ALL_ACCESS, HANDLE, LPCSTR, PHANDLE, PVOID};
 
 use crate::futex::{self, WakeupReason};
 use crate::{RESERVED_BITS, RESERVED_MASK};
@@ -364,12 +362,7 @@ fn ProbeKeyedEvent() -> Option<KeyedEvent> {
             Flags: ULONG,
         ) -> NTSTATUS = mem::transmute(NtCreateKeyedEvent);
         let mut handle: HANDLE = ptr::null_mut();
-        let status = NtCreateKeyedEvent(
-            &mut handle,
-            GENERIC_READ | GENERIC_WRITE,
-            ptr::null_mut(),
-            0,
-        );
+        let status = NtCreateKeyedEvent(&mut handle, EVENT_ALL_ACCESS, ptr::null_mut(), 0);
         if status != STATUS_SUCCESS {
             return None;
         }
