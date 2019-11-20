@@ -44,15 +44,11 @@ use windows as imp;
 #[cfg(unix)]
 mod errno;
 
-/*
-#[cfg(all(any(target_os = "macos", target_os="ios"),
-          not(feature = "fallback")))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "fallback")))]
 mod darwin;
 
-#[cfg(all(any(target_os = "macos", target_os="ios"),
-          not(feature = "fallback")))]
+#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "fallback")))]
 use darwin as imp;
-*/
 
 #[cfg(unix)]
 #[allow(unused)]
