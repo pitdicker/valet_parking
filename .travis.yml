@@ -12,6 +12,8 @@ matrix:
     - cargo build
     - cargo run --example test_synchronization --release
     - cargo run --example test_synchronization --release --features=fallback
+    - cargo run --example test_synchronization
+    - cargo run --example test_synchronization --features=fallback
 
   # test nightly and test cross-compiling
   - rust: nightly
@@ -43,6 +45,8 @@ matrix:
     - cargo build
     - cargo run --example test_synchronization --release
     - cargo run --example test_synchronization --release --features=fallback
+    - cargo run --example test_synchronization
+    - cargo run --example test_synchronization --features=fallback
 
   # MacOS 10.11, needs fallback
   - rust: stable
@@ -52,6 +56,8 @@ matrix:
     - cargo build
     - cargo run --example test_synchronization --release
     - cargo run --example test_synchronization --release --features=fallback
+    - cargo run --example test_synchronization
+    - cargo run --example test_synchronization --features=fallback
 
   - rust: stable
     os: windows
@@ -59,3 +65,6 @@ matrix:
     - cargo test
     - cargo test --release
     - cargo run --example test_synchronization --release
+    - cargo run --example test_synchronization --release --features=fallback
+    - cargo run --example test_synchronization
+    - cargo run --example test_synchronization --features=fallback
