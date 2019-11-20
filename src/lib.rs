@@ -1,7 +1,11 @@
 //! `valet_boy` provides a cross-platform abstraction over thread parking. The goal is to provide an
 //! abstraction with little overhead, which is `no_std`-compatible and requires little overhead.
-#![no_std]
-#![cfg_attr(all(target_arch = "wasm32", target_feature = "atomics"), feature(stdsimd))]
+#![cfg_attr(not(target_vendor = "fortanix"), no_std)]
+#![cfg_attr(
+    all(target_arch = "wasm32", target_feature = "atomics"),
+    feature(stdsimd)
+)]
+#![cfg_attr(target_vendor = "fortanix", feature(sgx_platform))]
 
 use core::mem;
 use core::sync::atomic::AtomicUsize;
@@ -79,6 +83,11 @@ use posix as imp;
 
 #[allow(unused)]
 mod waiter_queue;
+
+#[cfg(target_vendor = "fortanix")]
+mod fortanix;
+#[cfg(target_vendor = "fortanix")]
+use fortanix as imp;
 
 // Multiple threads can wait on a single `AtomicUsize` until one thread wakes them all up at once.
 pub trait Waiters {
