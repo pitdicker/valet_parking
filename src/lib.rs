@@ -1,5 +1,7 @@
 //! `valet_boy` provides a cross-platform abstraction over thread parking. The goal is to provide an
 //! abstraction with little overhead, which is `no_std`-compatible and requires little overhead.
+#![no_std]
+#![cfg_attr(all(target_arch = "wasm32", target_feature = "atomics"), feature(stdsimd))]
 
 use core::mem;
 use core::sync::atomic::AtomicUsize;
@@ -16,6 +18,7 @@ use core::time::Duration;
     target_os = "macos",
     target_os = "openbsd",
     target_os = "redox",
+    all(target_arch = "wasm32", target_feature = "atomics"),
     windows
 ))]
 pub mod futex;
@@ -29,7 +32,8 @@ pub mod futex;
         target_os = "fuchsia",
         target_os = "linux",
         target_os = "openbsd",
-        target_os = "redox"
+        target_os = "redox",
+        all(target_arch = "wasm32", target_feature = "atomics")
     ),
     not(feature = "fallback")
 ))]

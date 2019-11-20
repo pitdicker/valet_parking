@@ -17,6 +17,8 @@ mod linux;
 mod openbsd;
 #[cfg(target_os = "redox")]
 mod redox;
+#[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
+mod wasm_atomic;
 #[cfg(windows)]
 mod windows;
 
@@ -32,6 +34,8 @@ pub(crate) enum WakeupReason {
     TimedOut,
     /// Thread got woken up because of an interrupt.
     Interrupt,
+    /// Thread got woken up by a `futex_wake` call.
+    WokenUp,
     /// Thread may be woken up by a `futex_wake` call, but it may also have been for other reasons.
     Unknown,
 }

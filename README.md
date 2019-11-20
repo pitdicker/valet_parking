@@ -36,7 +36,7 @@ This does however takes some extra care on the side of `valet` to ensure no thre
 | Redox                   | futex[¹⁰]               | 2^63 s        | (untested)
 | CloudABI                | lock[¹¹]                | ...           | (WIP), uses some bits of the atomic
 | Fortanix SGX            | wait[¹²]                | not supported | (WIP), we keep a queue of waiting threads (requires std)
-| WASM atomics            | i32.atomic.wait[¹³]     | 2^63 ns       | (WIP)
+| WASM atomics            | i32.atomic.wait[¹³]     | 2^63 ns       | (untested)
 | MacOS 10.12+, iOS 10.0+ | ulock                   | 2^32 μs       |
 | DragonFly BSD           | userland mutex[¹⁴]      | 2^31 μs       |
 | illumos                 | futex                   | ...           | (WIP) https://github.com/rust-lang/rust/issues/55553
