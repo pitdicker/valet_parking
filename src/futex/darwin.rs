@@ -26,10 +26,18 @@ impl Futex for AtomicUsize {
             match errno() {
                 libc::EINTR => WakeupReason::Interrupt,
                 libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
-                e => panic!("Undocumented return value -1 with errno {}.", e)
+                e => {
+                    debug_assert!(false, "Unexpected errno of ulock_wait syscall: {}", e);
+                    WakeupReason::Unknown
+                }
             }
         } else {
-            panic!("Undocumented return value {}.", r)
+            debug_assert!(
+                false,
+                "Unexpected return value of ulock_wait syscall: {}",
+                r
+            );
+            WakeupReason::Unknown
         }
     }
 
@@ -37,12 +45,17 @@ impl Futex for AtomicUsize {
     fn futex_wake(&self) -> usize {
         let ptr = as_u32_pub(self) as *mut _;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
-        if r == 0 || (r == -1 && errno() == libc::ENOENT) {
-            // Apparently ENOENT means there were no threads waiting.
-            // Libdispatch considers it a success, so lets do the same.
-            return 0; // `ulock_wake` does not return the number of woken threads.
+        // Apparently the return value -1 with ENOENT means there were no threads waiting.
+        // Libdispatch considers it a success, so lets do the same.
+        if !(r == 0 || (r == -1 && errno() == libc::ENOENT)) {
+            debug_assert!(
+                r >= 0,
+                "Unexpected return value of ulock_wake syscall: {}; errno: {}",
+                r,
+                errno()
+            );
         }
-        panic!("Undocumented return value {} with errno {}.", r, errno());
+        return 0; // `ulock_wake` does not return the number of woken threads.
     }
 }
 

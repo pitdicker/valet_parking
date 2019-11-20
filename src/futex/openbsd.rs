@@ -1,3 +1,4 @@
+use core::cmp;
 use core::mem;
 use core::ptr;
 use core::sync::atomic::AtomicUsize;
@@ -36,7 +37,10 @@ impl Futex for AtomicUsize {
             libc::EINTR |
             libc::ECANCELED => WakeupReason::Interrupt,
             libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
-            r => panic!("Undocumented return value {}.", r)
+            r => {
+                debug_assert!(false, "Unexpected return value of futex call: {}", r);
+                WakeupReason::Unknown
+            }
         }
     }
 
@@ -53,8 +57,8 @@ impl Futex for AtomicUsize {
                 ptr::null_mut(),
             )
         };
-        assert!(r >= 0);
-        r as usize
+        debug_assert!(r >= 0, "Unexpected return value of futex call: {}", r);
+        cmp::max(r as usize, 0)
     }
 }
 

@@ -29,17 +29,18 @@ impl Futex for AtomicUsize {
         let r = unsafe { call::futex(ptr, FUTEX_WAIT, compare, 0, ts_ptr) };
         match r {
             Ok(r) => {
-                 debug_assert_eq!(r, 0);
-                 WakeupReason::Unknown
-             }
-            Err(Error { errno }) => {
-                match errno {
-                    EAGAIN => WakeupReason::NoMatch,
-                    EINTR => WakeupReason::Interrupt,
-                    ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
-                    e => panic!("Undocumented return value -1 with errno {}.", e)
-                }
+                debug_assert_eq!(r, 0);
+                WakeupReason::Unknown
             }
+            Err(Error { errno }) => match errno {
+                EAGAIN => WakeupReason::NoMatch,
+                EINTR => WakeupReason::Interrupt,
+                ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                e => {
+                    debug_assert!(false, "Unexpected error of futex syscall: {}", e);
+                    WakeupReason::Unknown
+                }
+            },
         }
     }
 
@@ -50,7 +51,10 @@ impl Futex for AtomicUsize {
         let r = unsafe { call::futex(ptr, FUTEX_WAKE, wake_count, 0, ptr::null_mut()) };
         match r {
             Ok(num_woken) => num_woken,
-            Err(Error { errno }) => panic!("Undocumented return value -1 with errno {}.", errno),
+            Err(Error { errno }) => {
+                debug_assert!(false, "Unexpected error of futex syscall: {}", errno);
+                0
+            }
         }
     }
 }

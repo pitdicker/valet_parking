@@ -34,7 +34,10 @@ impl Futex for AtomicUsize {
                 BOOL_FALSE | _ => {
                     match unsafe { GetLastError() } {
                         ERROR_TIMEOUT if ms != INFINITE => WakeupReason::TimedOut,
-                        r => panic!("Undocumented return value {}.", r),
+                        e => {
+                            debug_assert!(false, "Unexpected error of WaitOnAddress call: {}", e);
+                            WakeupReason::Unknown
+                        }
                     }
                 }
             }

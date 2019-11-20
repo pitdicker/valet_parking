@@ -1,3 +1,4 @@
+use core::cmp;
 use core::mem;
 use core::ptr;
 use core::sync::atomic::AtomicUsize;
@@ -34,15 +35,23 @@ impl Futex for AtomicUsize {
         };
         match r {
             0 => WakeupReason::Unknown,
-            -1 => {
-                match errno() {
-                    libc::EAGAIN => WakeupReason::NoMatch,
-                    libc::EINTR => WakeupReason::Interrupt,
-                    libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
-                    e => panic!("Undocumented return value -1 with errno {}.", e)
+            -1 => match errno() {
+                libc::EAGAIN => WakeupReason::NoMatch,
+                libc::EINTR => WakeupReason::Interrupt,
+                libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                e => {
+                    debug_assert!(false, "Unexpected errno of futex_wait syscall: {}", e);
+                    WakeupReason::Unknown
                 }
+            },
+            r => {
+                debug_assert!(
+                    false,
+                    "Unexpected return value of futex_wait syscall: {}",
+                    r
+                );
+                WakeupReason::Unknown
             }
-            r => panic!("Undocumented return value {}.", r)
         }
     }
 
@@ -60,8 +69,12 @@ impl Futex for AtomicUsize {
                 0,
             )
         };
-        assert!(r >= 0);
-        r as usize
+        debug_assert!(
+            r >= 0,
+            "Unexpected return value of futex_wake syscall: {}",
+            r
+        );
+        cmp::max(r as usize, 0)
     }
 }
 

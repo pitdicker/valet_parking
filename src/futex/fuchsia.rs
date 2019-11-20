@@ -23,7 +23,10 @@ impl Futex for AtomicUsize {
             ZX_OK => WakeupReason::Unknown,
             ZX_ERR_BAD_STATE => WakeupReason::NoMatch,
             ZX_ERR_TIMED_OUT if deadline != ZX_TIME_INFINITE => WakeupReason::TimedOut,
-            r => panic!("Undocumented return value {}.", r)
+            r => {
+                debug_assert!(false, "Unexpected return value of zx_futex_wait: {}", r);
+                WakeupReason::Unknown
+            }
         }
     }
 
@@ -32,7 +35,11 @@ impl Futex for AtomicUsize {
         let ptr = as_u32_pub(self) as *mut i32;
         let wake_count = u32::max_value();
         let r = unsafe { zx_futex_wake(ptr, wake_count) };
-        debug_assert!(r == ZX_OK);
+        debug_assert!(
+            r == ZX_OK,
+            "Unexpected return value of zx_futex_wake: {}",
+            r
+        );
         0 // FIXME: `zx_futex_wake` does not return the number of woken threads
     }
 }
