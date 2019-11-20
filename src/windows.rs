@@ -56,7 +56,18 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
                     Err(x) => current = x,
                 }
             }
-            wait_for_keyed_event(atomic, None);
+            // If a spurious wakeup happens right after a thread stores a new value in `atomic`
+            // but before it can send the signal, we have no way to detect it is spurious.
+            // If we then would not be waiting when the real signal is send, the sending thread
+            // may hang indefinitely.
+            // There is no way to prevent this race, but as an extra protection we check the return
+            // value and repark when the wakeup is definitely not due to the event.
+            loop {
+                if let WakeupReason::Unknown = wait_for_keyed_event(atomic, None) {
+                    break;
+                }
+            }
+            debug_assert!(atomic.load(Ordering::Relaxed) & !RESERVED_MASK != compare);
         }
         Backend::None => unreachable!(),
     }
@@ -87,9 +98,10 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
             let mut current = atomic.load(Ordering::SeqCst);
             loop {
                 if current & STATE_MASK != NOT_PARKED {
-                    // Calling `park` on it an atomic that is already in use to park another thread
-                    // is not allowed by the API.
-                    panic!();
+                    panic!(
+                        "Tried to call park on an atomic while \
+                         another thread is already parked on it"
+                    );
                 }
                 match atomic.compare_exchange_weak(
                     current,
@@ -102,12 +114,20 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
                 }
             }
             loop {
-                wait_for_keyed_event(atomic, timeout);
-                // We are done if the status is NOTIFIED.
-                // Also break if there was a timeout supplied, because we don't handle spurious
-                // wakeups in that case.
-                if atomic.load(Ordering::Relaxed) & STATE_MASK == NOTIFIED || timeout.is_some() {
-                    break;
+                let r = wait_for_keyed_event(atomic, timeout);
+                if timeout.is_some() {
+                    // We don't guarantee there are no spurious wakeups when there was a timeout
+                    // supplied. Reset state to `NOT_PARKED`.
+                    &atomic.fetch_and(!STATE_MASK, Ordering::Relaxed);
+                    return;
+                }
+                if let WakeupReason::Unknown = r {
+                    // The wakeup was not caused by an alert ot timeout, we know (almost) for sure
+                    // if the status is set to NOTIFIED. But this remains inherently racy, see
+                    // the `compare_and_wait` implementation.
+                    if atomic.load(Ordering::Relaxed) & STATE_MASK == NOTIFIED {
+                        break;
+                    }
                 }
             }
             // Reset state to `NOT_PARKED`.
@@ -154,7 +174,7 @@ fn wait_for_keyed_event(atomic: &AtomicUsize, timeout: Option<Duration>) -> Wake
             .unwrap_or(ptr::null_mut());
         let r = (f.NtWaitForKeyedEvent)(f.handle, key, FALSE, timeout_ptr);
         // `NtWaitForKeyedEvent` is an undocumented API where we don't known the possible
-        // return values, but they are probably similar to `NtWaitForSingleObject`.
+        // return values, but they are most likely similar to `NtWaitForSingleObject`.
         match r {
             STATUS_SUCCESS => WakeupReason::Unknown,
             STATUS_TIMEOUT if nt_timeout.is_some() => WakeupReason::TimedOut,
