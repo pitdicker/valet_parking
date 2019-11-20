@@ -60,19 +60,31 @@ pub(crate) trait Futex {
 //
 // Implementation of the Waiter trait
 //
-
+const HAS_WAITERS: usize = 0x1;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
-    assert_eq!(compare & RESERVED_MASK, 0);
     loop {
-        atomic.futex_wait(compare, None);
-        if atomic.load(Ordering::SeqCst) != compare {
+        match atomic.compare_exchange_weak(compare, compare | HAS_WAITERS, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => break,
+            Err(current) => {
+                if current & !RESERVED_MASK != compare {
+                    return;
+                }
+                debug_assert!(current == compare | HAS_WAITERS);
+            }
+        }
+    }
+    loop {
+        atomic.futex_wait(compare | HAS_WAITERS, None);
+        if atomic.load(Ordering::Relaxed) != (compare | HAS_WAITERS) {
             break;
         }
     }
 }
 
 pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
-    atomic.futex_wake(new);
+    if atomic.swap(new, Ordering::SeqCst) & HAS_WAITERS == HAS_WAITERS {
+        atomic.futex_wake(new);
+    }
 }
 
 //
@@ -89,9 +101,6 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 // On several 64-bit systems the futex operation compares only 32 bits. We give it the 32 bits that
 // contain the bits reserved for the user, and we must give it our parking state bits. That is why
 // Parking state is the first to come after the Free bits.
-//
-// For Windows NT Keyed Events we need to keep track of the number of threads that should be waked.
-// So all the remaining bits are used for the Counter.
 
 // States for Parker
 const NOT_PARKED: usize = 0x0 << (RESERVED_BITS - 2);
