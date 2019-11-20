@@ -1,3 +1,17 @@
+//! The `WaitOnAddress` / `WakeByAddress*` functions provide a convenient futex-like interface,
+//! but they are only available since Windows 8. They are implemented in the `futex` module.
+//!
+//! On earlier Windows versions we fall back on the undocumented NT Keyed Events API. By using the
+//! address of the atomic as the key to wait on, we can get something with looks a lot like a futex.
+//!
+//! There is an important difference:
+//! Before the thread goes to sleep it does not check a comparison value. Instead the
+//! `NtReleaseKeyedEvent` function blocks, waiting for a thread to wake if there is none. (Compared
+//! to the Futex wake function which will immediately return.)
+//!
+//! With every release event one thread is waked. Thus we need to keep track of how many waiters
+//! there are in order to wake them all, and to prevent the release function from hanging
+//! indefinitely.
 #![allow(non_snake_case)]
 
 use core::cell::Cell;
@@ -7,97 +21,187 @@ use core::sync::atomic::{spin_loop_hint, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use winapi::shared::basetsd::SIZE_T;
-use winapi::shared::minwindef::{BOOL, DWORD, TRUE as BOOL_TRUE, FALSE as BOOL_FALSE, ULONG};
-use winapi::shared::winerror::ERROR_TIMEOUT;
-use winapi::shared::ntdef::{FALSE as BOOLEAN_FALSE, NTSTATUS};
+use winapi::shared::minwindef::{BOOL, DWORD, ULONG};
+use winapi::shared::ntdef::{FALSE, NTSTATUS};
 use winapi::shared::ntstatus::{STATUS_ALERTED, STATUS_SUCCESS, STATUS_TIMEOUT, STATUS_USER_APC};
-use winapi::um::errhandlingapi::GetLastError;
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
-use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::{
     ACCESS_MASK, BOOLEAN, GENERIC_READ, GENERIC_WRITE, HANDLE, LPCSTR, PHANDLE, PVOID,
 };
 
-use crate::futex_like::{FutexLike, COUNTER_MASK, WakeupReason};
+use crate::futex::{self, WakeupReason};
+use crate::{RESERVED_BITS, RESERVED_MASK};
 
-impl FutexLike for AtomicUsize {
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        match BACKEND.get() {
-            Backend::Wait(f) => {
-                let address = self as *const _ as PVOID;
-                let compare_address = &compare as *const _ as PVOID;
-                let ms = convert_timeout_ms(timeout);
-                let r =
-                    (f.WaitOnAddress)(address, compare_address, mem::size_of::<AtomicUsize>(), ms);
-                match r {
-                    BOOL_TRUE => WakeupReason::Unknown, // Can be any reason except TimedOut
-                    BOOL_FALSE | _ => {
-                        match unsafe { GetLastError() } {
-                            ERROR_TIMEOUT if ms != INFINITE => WakeupReason::TimedOut,
-                            r => panic!("Undocumented return value {}.", r),
-                        }
-                    }
+//
+// Implementation of the Waiter trait
+//
+pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
+    match BACKEND.get() {
+        Backend::Wait(_) => futex::compare_and_wait(atomic, compare),
+        Backend::Keyed(_) => {
+            // Register the number of threads waiting. In theory we should be careful not to
+            // overflow out of our counter bits. But it is impossible to have so many
+            // threads waiting that it doesn't fit in 2^27 on 32-bit and 2^59 on 64-bit
+            // (there would not be enough memory to hold their stacks).
+            let mut current = atomic.load(Ordering::Relaxed);
+            loop {
+                if current & !RESERVED_MASK != compare {
+                    return;
+                }
+                match atomic.compare_exchange_weak(
+                    current,
+                    current + 1,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(x) => current = x,
                 }
             }
-            Backend::Keyed(f) => {
-                // Register the number of threads waiting. In theory we should be careful not to
-                // overflow out of our counter bits. But it is impossible to have so many
-                // threads waiting that it doesn't fit in 2^25 on 32-bit and 2^57 on 64-bit
-                // (there would not be enough memory to hold their stacks).
-                let mut current = self.load(Ordering::Relaxed);
-                loop {
-                    if current & !COUNTER_MASK != compare {
-                        return WakeupReason::NoMatch;
-                    }
-                    let old = self.compare_and_swap(current, current + 1, Ordering::Relaxed);
-                    if old == current {
-                        break;
-                    }
-                    current = old;
-                }
-                // We need to provide some unique key to wait on. The least significant bit must be
-                // zero, it is appearently used as a flag bit. The address of `self` seems like a
-                // good candidate.
-                let key = self as *const AtomicUsize as PVOID;
-                let nt_timeout = convert_timeout_100ns(timeout);
-                let timeout_ptr = nt_timeout
-                    .map(|t_ref| t_ref as *mut _)
-                    .unwrap_or(ptr::null_mut());
-                let r = (f.NtWaitForKeyedEvent)(f.handle, key, BOOLEAN_FALSE, timeout_ptr);
-                // `NtWaitForKeyedEvent` is an undocumented API where we don't known the possible
-                // return values, but they are probably similar to `NtWaitForSingleObject`.
-                match r {
-                    STATUS_SUCCESS => WakeupReason::Unknown,
-                    STATUS_TIMEOUT if nt_timeout.is_some() => WakeupReason::TimedOut,
-                    STATUS_ALERTED |
-                    STATUS_USER_APC => WakeupReason::Interrupt,
-                    r => panic!("Undocumented return value {}.", r)
-                }
-            }
-            Backend::None => unreachable!(),
+            wait_for_keyed_event(atomic, None);
         }
+        Backend::None => unreachable!(),
     }
+}
 
-    fn futex_wake(&self, new: usize) -> usize {
-        let current = self.swap(new, Ordering::SeqCst);
-        match BACKEND.get() {
-            Backend::Wait(f) => {
-                (f.WakeByAddressAll)(self as *const _ as PVOID);
-                0 // `WakeByAddressAll` does not return the number of woken threads
-            }
-            Backend::Keyed(f) => {
-                let wake_count = current & COUNTER_MASK;
-                // Recreate the key; the address of self.
-                let key = self as *const AtomicUsize as PVOID;
-                // With every event we wake one thread. If we would try to wake a thread that is not
-                // parked we will block indefinitely.
-                for _ in 0..wake_count {
-                    (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
-                };
-                wake_count
-            }
-            Backend::None => unreachable!(),
+pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
+    match BACKEND.get() {
+        Backend::Wait(_) => futex::store_and_wake(atomic, new),
+        Backend::Keyed(_) => {
+            let wake_count = atomic.swap(new, Ordering::SeqCst) & RESERVED_MASK;
+            release_keyed_events(atomic, wake_count);
         }
+        Backend::None => unreachable!(),
+    }
+}
+
+//
+// Implementation of the Parker trait
+//
+const NOT_PARKED: usize = 0x0 << (RESERVED_BITS - 2);
+const PARKED: usize = 0x1 << (RESERVED_BITS - 2);
+const NOTIFIED: usize = 0x2 << (RESERVED_BITS - 2);
+
+pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
+    match BACKEND.get() {
+        Backend::Wait(_) => futex::park(atomic, timeout),
+        Backend::Keyed(_) => {
+            let mut current = atomic.load(Ordering::SeqCst);
+            loop {
+                if current & STATE_MASK != NOT_PARKED {
+                    // Calling `park` on it an atomic that is already in use to park another thread
+                    // is not allowed by the API.
+                    panic!();
+                }
+                match atomic.compare_exchange_weak(
+                    current,
+                    current | PARKED,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                ) {
+                    Ok(_) => break,
+                    Err(x) => current = x,
+                }
+            }
+            loop {
+                wait_for_keyed_event(atomic, timeout);
+                // We are done if the status is NOTIFIED.
+                // Also break if there was a timeout supplied, because we don't handle spurious
+                // wakeups in that case.
+                if atomic.load(Ordering::Relaxed) & STATE_MASK == NOTIFIED || timeout.is_some() {
+                    break;
+                }
+            }
+            // Reset state to `NOT_PARKED`.
+            &atomic.fetch_and(!STATE_MASK, Ordering::Relaxed);
+        }
+        Backend::None => unreachable!(),
+    }
+}
+
+pub(crate) fn unpark(atomic: &AtomicUsize) {
+    match BACKEND.get() {
+        Backend::Wait(_) => futex::unpark(atomic),
+        Backend::Keyed(_) => {
+            let current = atomic.load(Ordering::SeqCst);
+            if atomic
+                .compare_exchange(
+                    current,
+                    (current & !RESERVED_MASK) | NOTIFIED,
+                    Ordering::Relaxed,
+                    Ordering::Relaxed,
+                )
+                .is_ok()
+            {
+                // We were unable to switch the state to `NOTIFIED`; Some other thread must be in
+                // the process of unparking it. Either way the parked thread is being waked, and
+                // there is nothing for us to do.
+                return;
+            }
+            release_keyed_events(atomic, 1);
+        }
+        Backend::None => unreachable!(),
+    }
+}
+
+fn wait_for_keyed_event(atomic: &AtomicUsize, timeout: Option<Duration>) -> WakeupReason {
+    if let Backend::Keyed(f) = BACKEND.get() {
+        // We need to provide some unique key to wait on. The least significant bit must be
+        // zero, it is appearently used as a flag bit. The address of `atomic` seems like a
+        // good candidate.
+        let key = atomic as *const AtomicUsize as PVOID;
+        let nt_timeout = convert_timeout_100ns(timeout);
+        let timeout_ptr = nt_timeout
+            .map(|t_ref| t_ref as *mut _)
+            .unwrap_or(ptr::null_mut());
+        let r = (f.NtWaitForKeyedEvent)(f.handle, key, FALSE, timeout_ptr);
+        // `NtWaitForKeyedEvent` is an undocumented API where we don't known the possible
+        // return values, but they are probably similar to `NtWaitForSingleObject`.
+        match r {
+            STATUS_SUCCESS => WakeupReason::Unknown,
+            STATUS_TIMEOUT if nt_timeout.is_some() => WakeupReason::TimedOut,
+            STATUS_ALERTED | STATUS_USER_APC => WakeupReason::Interrupt,
+            r => {
+                debug_assert!(
+                    false,
+                    "Unexpected return value of NtWaitForKeyedEvent: {}",
+                    r
+                );
+                WakeupReason::Unknown
+            }
+        }
+    } else {
+        unreachable!();
+    }
+}
+
+fn release_keyed_events(atomic: &AtomicUsize, wake_count: usize) {
+    if let Backend::Keyed(f) = BACKEND.get() {
+        // Recreate the key; the address of self.
+        let key = atomic as *const AtomicUsize as PVOID;
+        for _ in 0..wake_count {
+            (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
+        }
+    } else {
+        unreachable!();
+    }
+}
+
+// NT uses a timeout in units of 100ns, where positive values are absolute and negative values are
+// relative.
+fn convert_timeout_100ns(timeout: Option<Duration>) -> Option<LARGE_INTEGER> {
+    match timeout {
+        Some(duration) => {
+            if duration.as_secs() > i64::max_value() as u64 {
+                return None;
+            }
+            // Checked operations that return `None` on overflow.
+            // Round nanosecond values up to 100 ns.
+            (duration.as_secs() as i64)
+                .checked_mul(-10_000_000)
+                .and_then(|x| x.checked_sub((duration.subsec_nanos() as i64 + 99) / 100))
+        }
+        None => None,
     }
 }
 
@@ -106,11 +210,11 @@ const READY: usize = 0;
 const INITIALIZING: usize = 1;
 const EMPTY: usize = 2;
 
-struct BackendStatic {
+pub(crate) struct BackendStatic {
     status: AtomicUsize,
     backend: Cell<Backend>,
 }
-static BACKEND: BackendStatic = BackendStatic::new();
+pub(crate) static BACKEND: BackendStatic = BackendStatic::new();
 
 impl BackendStatic {
     const fn new() -> Self {
@@ -120,7 +224,7 @@ impl BackendStatic {
         }
     }
 
-    fn get(&self) -> Backend {
+    pub(crate) fn get(&self) -> Backend {
         if self.status.load(Ordering::Acquire) == READY {
             return self.backend.get();
         }
@@ -160,7 +264,7 @@ impl BackendStatic {
 unsafe impl Sync for BackendStatic {}
 
 #[derive(Clone, Copy)]
-enum Backend {
+pub(crate) enum Backend {
     None,
     Wait(WaitAddress),
     Keyed(KeyedEvent),
@@ -173,18 +277,18 @@ type LARGE_INTEGER = i64;
 type PLARGE_INTEGER = *mut LARGE_INTEGER;
 
 #[derive(Clone, Copy)]
-struct WaitAddress {
-    WaitOnAddress: extern "system" fn(
+pub(crate) struct WaitAddress {
+    pub(crate) WaitOnAddress: extern "system" fn(
         Address: PVOID,
         CompareAddress: PVOID,
         AddressSize: SIZE_T,
         dwMilliseconds: DWORD,
     ) -> BOOL,
-    WakeByAddressAll: extern "system" fn(Address: PVOID),
+    pub(crate) WakeByAddressAll: extern "system" fn(Address: PVOID),
 }
 
 #[derive(Clone, Copy)]
-struct KeyedEvent {
+pub(crate) struct KeyedEvent {
     handle: HANDLE, // The global keyed event handle.
     NtReleaseKeyedEvent: extern "system" fn(
         EventHandle: HANDLE,
@@ -269,54 +373,5 @@ fn ProbeKeyedEvent() -> Option<KeyedEvent> {
             NtReleaseKeyedEvent: mem::transmute(NtReleaseKeyedEvent),
             NtWaitForKeyedEvent: mem::transmute(NtWaitForKeyedEvent),
         })
-    }
-}
-
-// `NtWaitForKeyedEvent` allows a thread to go to sleep, waiting on the event signaled by
-// `NtReleaseKeyedEvent`. The major different between this API and the Futex API is that there is no
-// comparison value that is checked as the thread goes to sleep. Instead the `NtReleaseKeyedEvent`
-// function blocks, waiting for a thread to wake if there is none. (Compared to the Futex wake
-// function which will immediately return.)
-//
-// Thus to use this API we need to keep track of how many waiters there are to prevent the release
-// function from hanging.
-//
-// http://joeduffyblog.com/2006/11/28/windows-keyed-events-critical-sections-and-new-vista-synchronization-features/
-// http://locklessinc.com/articles/keyed_events/
-
-// NT uses a timeout in units of 100ns, where positive values are absolute and negative values are
-// relative.
-fn convert_timeout_100ns(timeout: Option<Duration>) -> Option<LARGE_INTEGER> {
-    match timeout {
-        Some(duration) => {
-            if duration.as_secs() > i64::max_value() as u64 {
-                return None;
-            }
-            // Checked operations that return `None` on overflow.
-            // Round nanosecond values up to 100 ns.
-            (duration.as_secs() as i64)
-                .checked_mul(-10_000_000)
-                .and_then(|x| x.checked_sub((duration.subsec_nanos() as i64 + 99) / 100))
-        }
-        None => None,
-    }
-}
-
-// Timeout in milliseconds, round nanosecond values up to milliseconds.
-fn convert_timeout_ms(timeout: Option<Duration>) -> DWORD {
-    match timeout {
-        None => INFINITE,
-        Some(duration) => duration
-            .as_secs()
-            .checked_mul(1000)
-            .and_then(|x| x.checked_add((duration.subsec_nanos() as u64 + 999999) / 1000000))
-            .map(|ms| {
-                if ms > <DWORD>::max_value() as u64 {
-                    INFINITE
-                } else {
-                    ms as DWORD
-                }
-            })
-            .unwrap_or(INFINITE),
     }
 }
