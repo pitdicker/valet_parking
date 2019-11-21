@@ -89,34 +89,74 @@ mod fortanix;
 #[cfg(target_vendor = "fortanix")]
 use fortanix as imp;
 
-// Multiple threads can wait on a single `AtomicUsize` until one thread wakes them all up at once.
+/// Multiple threads can wait on a single [`AtomicUsize`] until one thread wakes them all up at
+/// once.
+///
+/// The [`AtomicUsize`] may be used for other purposes when there can be no threads waiting on it.
+/// But when [`compare_and_wait`] and [`store_and_wake`] may be used, all but the five high-order
+/// bits are reserved.
+///
+/// # Safety
+/// To use this trait safely, ensure that the reserved bits are not modified while threads may be
+/// waiting:
+/// - All reserved bits must be zero before the first use of [`compare_and_wait`].
+/// - None of the reserved bits are changed before [`store_and_wake`].
+///
+/// The constants [`FREE_BITS`], [`RESERVED_BITS`] and [`RESERVED_MASK`] can be helpful.
+///
+/// [`AtomicUsize`]: https://doc.rust-lang.org/core/sync/atomic/struct.AtomicUsize.html
+/// [`compare_and_wait`]: #tymethod.compare_and_wait
+/// [`store_and_wake`]: #tymethod.store_and_wake
+/// [`FREE_BITS`]: constant.FREE_BITS.html
+/// [`RESERVED_BITS`]: constant.RESERVED_BITS.html
+/// [`RESERVED_MASK`]: constant.RESERVED_MASK.html
 pub trait Waiters {
-    /// Park the current thread. Reparks after a spurious wakeup.
+    /// Make the current thread wait until it receives a wake signal. Guaranteed not to wake up
+    /// spuriously.
     ///
-    /// `compare` is used to decide if this thread needs to be parked. This avoids a race condition
-    /// where one thread may try to park itself, while another thread unparks it concurrently. It is
-    /// also used to detect whether a wakeup was spurious, in wich case this function will repark
-    /// the thread.
+    /// The `compare` value is used to decide if this thread needs to be parked. This avoids a race
+    /// condition where one thread may try to park itself, while another thread unparks it
+    /// concurrently. It is also used to detect whether a wakeup was spurious, in wich case this
+    /// `compare_and_wait` will repark the thread. Only the five non-reserved high order bits will
+    /// be compared.
     ///
-    /// Only the five non-reserved bits will be compared, all other bits must be zero.
-    fn compare_and_wait(&self, compare: usize);
+    /// # Atomic ordering
+    /// `compare_and_wait` is a primitive intended for thread parking, not for data synchronization.
+    /// The atomic comparions this function does before waiting and after waking are not guaranteed
+    /// to have any ordering stronger than [`Relaxed`].
+    ///
+    /// If you need to read data written by the thread that waked this thread, manually do an
+    /// [`Acquire`] after the `compare_and_wait`. This can be either a [`load`] on the atomic with
+    /// [`Acquire`] ordering, or a [`fence`] with [`Acquire`] ordering.
+    ///
+    /// [`load`]: https://doc.rust-lang.org/core/sync/atomic/struct.AtomicUsize.html#method.load
+    /// [`fence`]: https://doc.rust-lang.org/core/sync/atomic/fn.fence.html
+    /// [`Acquire`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Acquire
+    /// [`Relaxed`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Relaxed
+     fn compare_and_wait(&self, compare: usize);
 
-    /// Unpark all waiting threads.
+    /// Wake up all waiting threads.
     ///
-    ///`new` must be provided to set `self` to some value that is not matched by the `compare`
-    /// variable passed to `park`. It will be stored with Release ordering or stronger.
+    /// `new` must be provided to set `self` to some value that is not matched by the `compare`
+    /// value passed to [`compare_and_wait`].
     ///
-    /// Returns the number of waiting threads that were woken up. FIXME: todo
+    /// # Atomic ordering
+    /// The atomic store will be done with [`Release`] ordering. Other threads may do an [`Acquire`]
+    /// after waking to see all writes made by this thread.
     ///
     /// # Safety
     /// If any of the reserved bits where changed while there where threads waiting, this function
     /// may fail to wake threads, or even dereference dangling pointers.
+    ///
+    /// [`compare_and_wait`]: #tymethod.compare_and_wait
+    /// [`Acquire`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Acquire
+    /// [`Release`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Release
     unsafe fn store_and_wake(&self, new: usize);
 }
 
 impl Waiters for AtomicUsize {
     fn compare_and_wait(&self, compare: usize) {
-        imp::compare_and_wait(self, compare)
+        imp::compare_and_wait(self, compare & !RESERVED_MASK)
     }
 
     unsafe fn store_and_wake(&self, new: usize) {
@@ -167,8 +207,13 @@ impl Parker for AtomicUsize {
     }
 }
 
+/// Number of high-order bits which are not reserved while using the
+/// [`Waiters`](trait.Waiters.html) trait.
 pub const FREE_BITS: usize = 5;
+/// Number of low-order bits which are reserved while using the [`Waiters`](trait.Waiters.html)
+/// trait.
 pub const RESERVED_BITS: usize = mem::size_of::<usize>() * 8 - FREE_BITS;
+/// Mask matching the bits which are reserved while using the [`Waiters`](trait.Waiters.html) trait.
 pub const RESERVED_MASK: usize = (1 << RESERVED_BITS) - 1;
 
 // Convert this pointer to an `AtomicUsize` to a pointer to an `*const u32`, pointing to the part

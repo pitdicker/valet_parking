@@ -31,7 +31,7 @@ use crate::futex::{self, WakeupReason};
 use crate::{RESERVED_BITS, RESERVED_MASK};
 
 //
-// Implementation of the Waiter trait
+// Implementation of the Waiters trait
 //
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
     match BACKEND.get() {
@@ -77,7 +77,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     match BACKEND.get() {
         Backend::Wait(_) => futex::store_and_wake(atomic, new),
         Backend::Keyed(_) => {
-            let wake_count = atomic.swap(new, Ordering::SeqCst) & RESERVED_MASK;
+            let wake_count = atomic.swap(new, Ordering::Release) & RESERVED_MASK;
             release_keyed_events(atomic, wake_count);
         }
         Backend::None => unreachable!(),

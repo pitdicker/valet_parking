@@ -12,7 +12,7 @@ const UNINITIALIZED: usize = 2;
 pub(crate) static HAS_ULOCK: AtomicUsize = AtomicUsize::new(UNINITIALIZED);
 
 //
-// Implementation of the Waiter trait
+// Implementation of the Waiters trait
 //
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
     if has_ulock() {

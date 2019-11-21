@@ -62,7 +62,7 @@ pub(crate) trait Futex {
 }
 
 //
-// Implementation of the Waiter trait
+// Implementation of the Waiters trait
 //
 const HAS_WAITERS: usize = 0x1;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
@@ -91,7 +91,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
 }
 
 pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
-    if atomic.swap(new, Ordering::SeqCst) & HAS_WAITERS == HAS_WAITERS {
+    if atomic.swap(new, Ordering::Release) & HAS_WAITERS == HAS_WAITERS {
         atomic.futex_wake();
     }
 }
