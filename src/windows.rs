@@ -87,6 +87,8 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 //
 // Implementation of the Parker trait
 //
+pub(crate) type Parker = AtomicUsize;
+
 const NOT_PARKED: usize = 0x0 << (RESERVED_BITS - 2);
 const PARKED: usize = 0x1 << (RESERVED_BITS - 2);
 const NOTIFIED: usize = 0x2 << (RESERVED_BITS - 2);

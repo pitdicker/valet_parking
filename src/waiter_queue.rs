@@ -1,11 +1,11 @@
 use core::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::{Parker, Waiters, FREE_BITS, RESERVED_MASK};
+use crate::{Parker, FREE_BITS, RESERVED_MASK};
 
 // Align so that the 5 lower bits are free for other uses.
 #[repr(align(32))]
 struct Waiter {
-    parker: AtomicUsize,
+    parker: Parker,
     next: usize,
 }
 
@@ -19,7 +19,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
         }
         // Create a node for our current thread.
         let node = Waiter {
-            parker: AtomicUsize::new(0),
+            parker: Parker::new(),
             next: next,
         };
         let me = pub_bits | ((&node as *const Waiter as usize) >> FREE_BITS);

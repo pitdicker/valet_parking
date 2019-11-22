@@ -166,12 +166,23 @@ impl Waiters for AtomicUsize {
 
 /// One thread parkes itself on an `AtomicUsize`, and multiple threads or a timeout are able to wake
 /// it up.
-pub trait Parker {
+pub struct Parker {
+    inner: imp::Parker,
+}
+
+impl Parker {
+    pub const fn new() -> Parker {
+        Parker {
+            inner: imp::Parker::new(0),
+        }
+    }
+
     /// Parks the current thread.
     ///
     /// Only one thread can park on `self`. If `park` is called on an atomic that already has a
     /// thread parked on it, it will panic.
     ///
+    /// # Timeouts and spurious wakeups
     /// If `timeout` is `None` this function will only return after another thread called [`unpark`]
     /// on `self`. It will repark the thread on spurious wakeups or interrupts.
     ///
@@ -184,26 +195,18 @@ pub trait Parker {
     /// - Timeouts are rounded *up* to the nearest granularity supported by the platform.
     ///   Millisecond resolution is the coarsest of the current implementations.
     /// - The maximum timeout is on all platforms in the order of days or longer, so not really of
-    ///   any concern. `park` ignores the timeout if it overflows the maximum.
+    ///   any concern. If the timeout overflows the maximum `park` will acts as if no timeout was
+    ///   supplied.
     ///
-    /// [`unpark`]: Parker::unpark
-    fn park(&self, timeout: Option<Duration>);
-
-    /// Unparks the waiting thread, if there is one.
-    ///
-    /// # Safety
-    /// If any of the reserved bits where changed while there whas a thread parked, this function
-    /// may fail to unpark it, or may even dereference a dangling pointer.
-    unsafe fn unpark(&self);
-}
-
-impl Parker for AtomicUsize {
-    fn park(&self, timeout: Option<Duration>) {
-        imp::park(self, timeout)
+    /// [`unpark`]: #method.unpark
+    pub fn park(&self, timeout: Option<Duration>) {
+        imp::park(&self.inner, timeout)
     }
 
-    unsafe fn unpark(&self) {
-        imp::unpark(self)
+    /// Unparks the waiting thread, if there is one.
+    #[allow(unused_unsafe)]
+    pub fn unpark(&self) {
+        unsafe { imp::unpark(&self.inner) }
     }
 }
 

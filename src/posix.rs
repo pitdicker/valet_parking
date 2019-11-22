@@ -30,6 +30,8 @@ pub struct PosixParker {
 const NOTIFY_BIT: usize = 1;
 const PTR_BITS: usize = RESERVED_MASK ^ NOTIFY_BIT;
 
+pub(crate) type Parker = AtomicUsize;
+
 // Returns false if the wakeup was because of the timeout, or spurious.
 pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
     let parker = PosixParker {

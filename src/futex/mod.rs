@@ -99,6 +99,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 //
 // Implementation of the Parker trait
 //
+pub(crate) type Parker = AtomicUsize;
 
 // Layout of the atomic:
 // FFFFFPP0_00000000_00000000_00000000_[00000000_00000000_00000000_00000000]
