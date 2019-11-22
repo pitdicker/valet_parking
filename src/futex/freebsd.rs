@@ -1,27 +1,20 @@
 use core::cmp;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use libc;
-
-use crate::as_u32_pub;
 use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
 // and `UMTX_OP_WAKE_PRIVATE`, which allow the kernel to maintain a process-private queue of waiting
-// threads. So we are going to use the same trick as for Linux futexes: pass a pointer to the
-// 32 high-order bits.
-// The compare value is still an usize, but the kernel seems to only compare the high-order part.
-// In the same way the number of threads to wake is tricky: the value is an usize, but is does not
-// accept values outside the i32 range.
-
-impl Futex for AtomicUsize {
+// threads. This has the nice side effect that it takes a operates on an i32 instead, which makes it
+// the similar to futex implementations on other platforms.
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = as_u32_pub(self) as *mut _;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
             .as_ref()
@@ -55,7 +48,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut _;
+        let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let wake_count = libc::INT_MAX as libc::c_long;
         let r = unsafe {
             umtx_op(

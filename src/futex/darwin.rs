@@ -1,20 +1,16 @@
 //! Use the undocumented `ulock_wait` and `ulock_wake` syscalls that are available since
 //! MacOS 10.12 Sierra (Darwin 16.0).
-use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use crate::as_u32_pub;
 use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
 
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
-
-impl Futex for AtomicUsize {
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = as_u32_pub(self) as *mut _;
-        let compare = (compare >> UNCOMPARED_BITS) as u64;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut libc::c_void;
+        let compare = compare as u32 as u64;
         let timeout_us = convert_timeout_us(timeout);
         let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
         if r >= 0 {
@@ -41,7 +37,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut _;
+        let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
         // Apparently the return value -1 with ENOENT means there were no threads waiting.
         // Libdispatch considers it a success, so lets do the same.

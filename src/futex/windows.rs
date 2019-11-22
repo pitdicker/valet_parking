@@ -1,7 +1,5 @@
-#![allow(non_snake_case)]
-
 use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use winapi::shared::minwindef::{DWORD, FALSE, TRUE};
@@ -13,13 +11,13 @@ use winapi::um::winnt::PVOID;
 use crate::futex::{Futex, WakeupReason};
 use crate::windows::{Backend, BACKEND};
 
-impl Futex for AtomicUsize {
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
+impl Futex for AtomicI32 {
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         if let Backend::Wait(f) = BACKEND.get() {
             let address = self as *const _ as PVOID;
             let compare_address = &compare as *const _ as PVOID;
             let ms = convert_timeout_ms(timeout);
-            let r = (f.WaitOnAddress)(address, compare_address, mem::size_of::<AtomicUsize>(), ms);
+            let r = (f.WaitOnAddress)(address, compare_address, mem::size_of::<AtomicI32>(), ms);
             match r {
                 TRUE => WakeupReason::Unknown, // Can be any reason except TimedOut
                 FALSE | _ => match unsafe { GetLastError() } {

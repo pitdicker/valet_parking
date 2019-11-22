@@ -1,7 +1,8 @@
-use core::sync::atomic::{AtomicUsize, Ordering};
+use core::mem;
+use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::time::Duration;
 
-use crate::{RESERVED_BITS, RESERVED_MASK};
+use crate::RESERVED_MASK;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod darwin;
@@ -47,7 +48,7 @@ pub(crate) trait Futex {
     /// `timeout` is relative duration, not an absolute deadline.
     ///
     /// This function does not guard against spurious wakeups.
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason;
 
     /// Wake all threads waiting on `self`, and set `self` to `new`.
     ///
@@ -64,7 +65,7 @@ pub(crate) trait Futex {
 //
 // Implementation of the Waiters trait
 //
-const HAS_WAITERS: usize = 0x1;
+const HAS_WAITERS: usize = 0x1 << UNCOMPARED_BITS;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
     loop {
         match atomic.compare_exchange_weak(
@@ -83,7 +84,11 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
         }
     }
     loop {
-        atomic.futex_wait(compare | HAS_WAITERS, None);
+        unsafe {
+            let atomic_i32 = get_i32_ref(atomic);
+            let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_BITS) as u32 as i32;
+            atomic_i32.futex_wait(compare, None);
+        }
         if atomic.load(Ordering::Relaxed) != (compare | HAS_WAITERS) {
             break;
         }
@@ -92,36 +97,51 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
 
 pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     if atomic.swap(new, Ordering::Release) & HAS_WAITERS == HAS_WAITERS {
-        atomic.futex_wake();
+        unsafe {
+            let atomic_i32 = get_i32_ref(atomic);
+            atomic_i32.futex_wake();
+        }
     }
 }
+
+// Transmuting an `AtomicUsize` to an `AtomicI32` is a bit of a questionable operations. I believe
+// it is safe because:
+// * On 32 bit it is a no-op.
+// * On 64 bit:
+//   - The size of the `AtomicI32` is less then `AtomicUsize`;
+//   - The alignment of the `AtomicUsize` is greater than or equal to `AtomicI32`;
+//   - We take care of endianness by taking the porting of the `AtomicUsize` that contains the
+//     non-reserved bits.
+//   - There are no stores done on the resulting atomic, it is only passed to the kernel to do one
+//     load for the comparison.
+// * We don't need to support 16-bit pointers, as all the operating systems that offer futex-like
+//   interfaces are 32-bit+.
+#[cfg(any(
+    target_pointer_width = "32",
+    all(target_pointer_width = "64", target_endian = "big")
+))]
+unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
+    &*(ptr_sized as *const AtomicUsize as *const AtomicI32)
+}
+#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
+unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
+    &*((ptr_sized as *const AtomicUsize as *const AtomicI32).offset(1))
+}
+
+const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
 //
 // Implementation of the Parker trait
 //
-pub(crate) type Parker = AtomicUsize;
-
-// Layout of the atomic:
-// FFFFFPP0_00000000_00000000_00000000_[00000000_00000000_00000000_00000000]
-//
-// F: Free bits, available for user
-// P: Parker state
-// 0: Unused bits
-//
-// On several 64-bit systems the futex operation compares only 32 bits. We give it the 32 bits that
-// contain the bits reserved for the user, and we must give it our parking state bits. That is why
-// Parking state is the first to come after the Free bits.
+pub(crate) type Parker = AtomicI32;
 
 // States for Parker
-const NOT_PARKED: usize = 0x0 << (RESERVED_BITS - 2);
-const PARKED: usize = 0x1 << (RESERVED_BITS - 2);
-const NOTIFIED: usize = 0x2 << (RESERVED_BITS - 2);
+const NOT_PARKED: i32 = 0x0;
+const PARKED: i32 = 0x1;
+const NOTIFIED: i32 = 0x2;
+const STATE_MASK: i32 = 0x3;
 
-const STATE_MASK: usize = 0x3 << (RESERVED_BITS - 2);
-#[allow(unused)] // not used by all implementations
-pub(crate) const COUNTER_MASK: usize = RESERVED_MASK ^ STATE_MASK;
-
-pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
+pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
     let mut current = atomic.load(Ordering::SeqCst);
     loop {
         match current & STATE_MASK {
@@ -157,20 +177,20 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
     &atomic.fetch_and(!STATE_MASK, Ordering::Relaxed);
 }
 
-pub(crate) fn unpark(atomic: &AtomicUsize) {
+pub(crate) fn unpark(atomic: &AtomicI32) {
     let current = atomic.load(Ordering::SeqCst);
     if atomic
         .compare_exchange(
-            current,
+            (current & !STATE_MASK) | PARKED,
             (current & !STATE_MASK) | NOTIFIED,
             Ordering::Relaxed,
             Ordering::Relaxed,
         )
         .is_err()
     {
-        // We were unable to switch the state to `NOTIFIED`; Some other thread must be in the
-        // process of unparking it. Either way the parked thread is being waked, and there is
-        // nothing for us to do.
+        // We were unable to switch the state from `PARKED` to `NOTIFIED`. Either there is no
+        // thread parked, or some other thread must be in the process of unparking it. In both cases
+        // there is nothing for us to do.
         return;
     }
     atomic.futex_wake();

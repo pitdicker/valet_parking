@@ -5,20 +5,15 @@
 //! ```
 
 use core::arch::wasm32;
-use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use crate::as_u32_pub;
 use crate::futex::{Futex, WakeupReason};
 
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
-
-impl Futex for AtomicUsize {
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = as_u32_pub(self) as *mut i32;
-        let compare = (compare >> UNCOMPARED_BITS) as i32;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut i32;
         let timeout_ns = convert_timeout(timeout);
         let r = unsafe { wasm32::i32_atomic_wait(ptr, compare, timeout_ns) };
         match r {
@@ -34,7 +29,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut i32;
+        let ptr = self as *const AtomicI32 as *mut i32;
         let r = unsafe { wasm32::atomic_notify(ptr, u32::max_value()) };
         r as usize
     }

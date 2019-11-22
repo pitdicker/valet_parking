@@ -1,9 +1,7 @@
-use core::mem;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use crate::as_u32_pub;
 use crate::futex::{Futex, WakeupReason};
 
 use syscall::call;
@@ -11,16 +9,10 @@ use syscall::data::TimeSpec;
 use syscall::error::{Error, EAGAIN, EINTR, ETIMEDOUT};
 use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE};
 
-// Redox futex takes an `i32` to compare if the thread should be parked.
-// convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
-// containing the non-reserved bits.
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
-
-impl Futex for AtomicUsize {
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = as_u32_pub(self) as *mut i32;
-        let compare = (compare >> UNCOMPARED_BITS) as u32 as i32;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut i32;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
             .as_ref()
@@ -46,7 +38,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut i32;
+        let ptr = self as *const AtomicI32 as *mut i32;
         let wake_count = i32::max_value();
         let r = unsafe { call::futex(ptr, FUTEX_WAKE, wake_count, 0, ptr::null_mut()) };
         match r {
