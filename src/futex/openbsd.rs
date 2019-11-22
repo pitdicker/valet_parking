@@ -1,22 +1,15 @@
 use core::cmp;
-use core::mem;
 use core::ptr;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use crate::as_u32_pub;
 use crate::futex::{Futex, WakeupReason};
 
-// OpenBSD futex takes an `i32` to compare if the thread should be parked.
-// convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
-// containing the non-reserved bits.
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
-
-impl Futex for AtomicUsize {
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = as_u32_pub(self) as *mut u32;
-        let compare = (compare >> UNCOMPARED_BITS) as libc::c_int;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut u32;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
             .as_ref()
@@ -37,7 +30,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut u32;
+        let ptr = self as *const AtomicI32 as *mut u32;
         let wake_count = i32::max_value();
         let r = unsafe { futex(ptr, FUTEX_WAKE, wake_count, ptr::null(), ptr::null_mut()) };
         debug_assert!(r >= 0, "Unexpected return value of futex call: {}", r);

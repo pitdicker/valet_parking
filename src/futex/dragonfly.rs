@@ -1,21 +1,14 @@
 use core::cmp;
-use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use libc;
-
-use crate::as_u32_pub;
 use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
 
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
-
-impl Futex for AtomicUsize {
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) {
-        let ptr = as_u32_pub(self) as *mut _;
-        let compare = (compare >> UNCOMPARED_BITS) as libc::c_int;
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *const i32;
         let ts = convert_timeout_us(timeout);
         let r = unsafe { umtx_sleep(ptr, compare, ts) };
         match r {
@@ -42,7 +35,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut _;
+        let ptr = self as *const AtomicI32 as *const i32;
         let r = unsafe { umtx_wakeup(ptr, 0) };
         debug_assert!(
             r >= 0,

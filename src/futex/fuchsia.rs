@@ -1,22 +1,14 @@
 #![allow(non_camel_case_types)]
 
-use core::mem;
-use core::sync::atomic::AtomicUsize;
+use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use crate::as_u32_pub;
 use crate::futex::{Futex, WakeupReason};
 
-// Fuchsia futex takes an `i32` to compare if the thread should be parked.
-// convert our reference to `AtomicUsize` to an `*const i32`, pointing to the part
-// containing the non-reserved bits.
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
-
-impl Futex for AtomicUsize {
+impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: usize, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = as_u32_pub(self) as *mut i32;
-        let compare = (compare >> UNCOMPARED_BITS) as i32; // FIXME: is this correct?
+    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut i32;
         let deadline = convert_timeout(timeout);
         let r = unsafe { zx_futex_wait(ptr, compare, deadline) };
         match r {
@@ -32,7 +24,7 @@ impl Futex for AtomicUsize {
 
     #[inline]
     fn futex_wake(&self) -> usize {
-        let ptr = as_u32_pub(self) as *mut i32;
+        let ptr = self as *const AtomicI32 as *mut i32;
         let wake_count = u32::max_value();
         let r = unsafe { zx_futex_wake(ptr, wake_count) };
         debug_assert!(

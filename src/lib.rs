@@ -133,7 +133,7 @@ pub trait Waiters {
     /// [`fence`]: https://doc.rust-lang.org/core/sync/atomic/fn.fence.html
     /// [`Acquire`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Acquire
     /// [`Relaxed`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Relaxed
-     fn compare_and_wait(&self, compare: usize);
+    fn compare_and_wait(&self, compare: usize);
 
     /// Wake up all waiting threads.
     ///
@@ -218,22 +218,3 @@ pub const FREE_BITS: usize = 5;
 pub const RESERVED_BITS: usize = mem::size_of::<usize>() * 8 - FREE_BITS;
 /// Mask matching the bits which are reserved while using the [`Waiters`](trait.Waiters.html) trait.
 pub const RESERVED_MASK: usize = (1 << RESERVED_BITS) - 1;
-
-// Convert this pointer to an `AtomicUsize` to a pointer to an `*const u32`, pointing to the part
-// containing the non-reserved bits.
-#[allow(unused)]
-#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-pub(crate) fn as_u32_pub(ptr: *const AtomicUsize) -> *const u32 {
-    unsafe { (ptr as *const _ as *const u32).offset(1) }
-}
-
-// Convert this pointer to an `AtomicUsize` to a pointer to an `*const u32`, pointing to the part
-// containing the non-reserved bits.
-#[allow(unused)]
-#[cfg(any(
-    target_pointer_width = "32",
-    all(target_pointer_width = "64", target_endian = "big")
-))]
-pub(crate) fn as_u32_pub(ptr: *const AtomicUsize) -> *const u32 {
-    ptr as *const _ as *const u32
-}
