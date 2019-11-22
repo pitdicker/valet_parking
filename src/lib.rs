@@ -234,22 +234,3 @@ pub(crate) fn as_u32_pub(ptr: *const AtomicUsize) -> *const u32 {
 pub(crate) fn as_u32_pub(ptr: *const AtomicUsize) -> *const u32 {
     ptr as *const _ as *const u32
 }
-
-// Convert this pointer to an `AtomicUsize` to a pointer to an `*const u32`, pointing to the part
-// containing only reserved bits.
-#[allow(unused)]
-#[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-pub(crate) fn as_u32_priv(ptr: *const AtomicUsize) -> *const u32 {
-    ptr as *const _ as *const u32
-}
-
-// Convert this pointer to an `AtomicUsize` to a pointer to an `*const u32`, pointing to the part
-// containing only reserved bits.
-#[allow(unused)]
-#[cfg(any(
-    target_pointer_width = "32",
-    all(target_pointer_width = "64", target_endian = "big")
-))]
-pub(crate) fn as_u32_priv(ptr: *const AtomicUsize) -> *const u32 {
-    unsafe { (ptr as *const _ as *const u32).offset(1) }
-}
