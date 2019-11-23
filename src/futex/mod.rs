@@ -35,9 +35,9 @@ pub(crate) enum WakeupReason {
     TimedOut,
     /// Thread got woken up because of an interrupt.
     Interrupt,
-    /// Thread got woken up by a `futex_wake` call.
+    /// Thread got woken up by a `wake` call.
     WokenUp,
-    /// Thread may be woken up by a `futex_wake` call, but it may also have been for other reasons.
+    /// Thread may be woken up by a `wake` call, but it may also have been for other reasons.
     Unknown,
 }
 
@@ -48,7 +48,7 @@ pub(crate) trait Futex {
     /// `timeout` is relative duration, not an absolute deadline.
     ///
     /// This function does not guard against spurious wakeups.
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason;
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason;
 
     /// Wake all threads waiting on `self`, and set `self` to `new`.
     ///
@@ -59,7 +59,7 @@ pub(crate) trait Futex {
     ///
     /// We don't support waking n out of m waiting threads. This gets into pretty advanced use cases,
     /// and it is not clear this can be supported cross-platform and without too much overhead.
-    fn futex_wake(&self) -> usize;
+    fn wake(&self) -> usize;
 }
 
 //
@@ -87,7 +87,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
         unsafe {
             let atomic_i32 = get_i32_ref(atomic);
             let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_BITS) as u32 as i32;
-            atomic_i32.futex_wait(compare, None);
+            atomic_i32.wait(compare, None);
         }
         if atomic.load(Ordering::Relaxed) != (compare | HAS_WAITERS) {
             break;
@@ -99,7 +99,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     if atomic.swap(new, Ordering::Release) & HAS_WAITERS == HAS_WAITERS {
         unsafe {
             let atomic_i32 = get_i32_ref(atomic);
-            atomic_i32.futex_wake();
+            atomic_i32.wake();
         }
     }
 }
@@ -162,10 +162,10 @@ pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
         }
 
         if timeout.is_some() {
-            atomic.futex_wait(current | PARKED, timeout);
+            atomic.wait(current | PARKED, timeout);
         } else {
             while current & STATE_MASK != NOTIFIED {
-                atomic.futex_wait(current | PARKED, None);
+                atomic.wait(current | PARKED, None);
                 // Load `self` so the next iteration of this loop can make sure this wakeup was not
                 // spurious, and otherwise park again.
                 current = atomic.load(Ordering::Relaxed);
@@ -193,5 +193,5 @@ pub(crate) fn unpark(atomic: &AtomicI32) {
         // there is nothing for us to do.
         return;
     }
-    atomic.futex_wake();
+    atomic.wake();
 }
