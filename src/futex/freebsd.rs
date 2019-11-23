@@ -13,7 +13,7 @@ use crate::futex::{Futex, WakeupReason};
 // the similar to futex implementations on other platforms.
 impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
@@ -47,7 +47,7 @@ impl Futex for AtomicI32 {
     }
 
     #[inline]
-    fn futex_wake(&self) -> usize {
+    fn wake(&self) -> usize {
         let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let wake_count = libc::INT_MAX as libc::c_long;
         let r = unsafe {

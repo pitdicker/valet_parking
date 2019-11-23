@@ -11,7 +11,7 @@ use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE};
 
 impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut i32;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
@@ -37,7 +37,7 @@ impl Futex for AtomicI32 {
     }
 
     #[inline]
-    fn futex_wake(&self) -> usize {
+    fn wake(&self) -> usize {
         let ptr = self as *const AtomicI32 as *mut i32;
         let wake_count = i32::max_value();
         let r = unsafe { call::futex(ptr, FUTEX_WAKE, wake_count, 0, ptr::null_mut()) };

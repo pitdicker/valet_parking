@@ -7,7 +7,7 @@ use crate::futex::{Futex, WakeupReason};
 
 impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut i32;
         let deadline = convert_timeout(timeout);
         let r = unsafe { zx_futex_wait(ptr, compare, deadline) };
@@ -23,7 +23,7 @@ impl Futex for AtomicI32 {
     }
 
     #[inline]
-    fn futex_wake(&self) -> usize {
+    fn wake(&self) -> usize {
         let ptr = self as *const AtomicI32 as *mut i32;
         let wake_count = u32::max_value();
         let r = unsafe { zx_futex_wake(ptr, wake_count) };

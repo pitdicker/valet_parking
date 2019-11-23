@@ -8,7 +8,7 @@ use crate::futex::{Futex, WakeupReason};
 
 impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut i32;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
@@ -32,23 +32,19 @@ impl Futex for AtomicI32 {
                 libc::EINTR => WakeupReason::Interrupt,
                 libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
                 e => {
-                    debug_assert!(false, "Unexpected errno of futex_wait syscall: {}", e);
+                    debug_assert!(false, "Unexpected errno of futex syscall: {}", e);
                     WakeupReason::Unknown
                 }
             },
             r => {
-                debug_assert!(
-                    false,
-                    "Unexpected return value of futex_wait syscall: {}",
-                    r
-                );
+                debug_assert!(false, "Unexpected return value of futex syscall: {}", r);
                 WakeupReason::Unknown
             }
         }
     }
 
     #[inline]
-    fn futex_wake(&self) -> usize {
+    fn wake(&self) -> usize {
         let ptr = self as *const AtomicI32 as *mut i32;
         let wake_count = i32::max_value();
         let r = unsafe {
@@ -61,11 +57,7 @@ impl Futex for AtomicI32 {
                 0,
             )
         };
-        debug_assert!(
-            r >= 0,
-            "Unexpected return value of futex_wake syscall: {}",
-            r
-        );
+        debug_assert!(r >= 0, "Unexpected return value of futex syscall: {}", r);
         cmp::max(r as usize, 0)
     }
 }

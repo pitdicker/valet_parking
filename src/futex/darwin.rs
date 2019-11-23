@@ -8,7 +8,7 @@ use crate::futex::{Futex, WakeupReason};
 
 impl Futex for AtomicI32 {
     #[inline]
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let compare = compare as u32 as u64;
         let timeout_us = convert_timeout_us(timeout);
@@ -36,7 +36,7 @@ impl Futex for AtomicI32 {
     }
 
     #[inline]
-    fn futex_wake(&self) -> usize {
+    fn wake(&self) -> usize {
         let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
         // Apparently the return value -1 with ENOENT means there were no threads waiting.

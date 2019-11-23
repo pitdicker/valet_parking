@@ -12,7 +12,7 @@ use crate::futex::{Futex, WakeupReason};
 use crate::windows::{Backend, BACKEND};
 
 impl Futex for AtomicI32 {
-    fn futex_wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
         if let Backend::Wait(f) = BACKEND.get() {
             let address = self as *const _ as PVOID;
             let compare_address = &compare as *const _ as PVOID;
@@ -33,7 +33,7 @@ impl Futex for AtomicI32 {
         }
     }
 
-    fn futex_wake(&self) -> usize {
+    fn wake(&self) -> usize {
         if let Backend::Wait(f) = BACKEND.get() {
             (f.WakeByAddressAll)(self as *const _ as PVOID);
             0 // `WakeByAddressAll` does not return the number of woken threads
