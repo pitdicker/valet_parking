@@ -17,7 +17,8 @@
 use core::cell::Cell;
 use core::mem;
 use core::ptr;
-use core::sync::atomic::{spin_loop_hint, AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+use core::sync::atomic::{spin_loop_hint, AtomicI32, AtomicUsize};
 use core::time::Duration;
 
 use winapi::shared::basetsd::SIZE_T;
@@ -41,17 +42,12 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
             // overflow out of our counter bits. But it is impossible to have so many
             // threads waiting that it doesn't fit in 2^27 on 32-bit and 2^59 on 64-bit
             // (there would not be enough memory to hold their stacks).
-            let mut current = atomic.load(Ordering::Relaxed);
+            let mut current = atomic.load(Relaxed);
             loop {
                 if current & !RESERVED_MASK != compare {
                     return;
                 }
-                match atomic.compare_exchange_weak(
-                    current,
-                    current + 1,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
+                match atomic.compare_exchange_weak(current, current + 1, Relaxed, Relaxed) {
                     Ok(_) => break,
                     Err(x) => current = x,
                 }
@@ -68,7 +64,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
                     break;
                 }
             }
-            debug_assert!(atomic.load(Ordering::Relaxed) & !RESERVED_MASK != compare);
+            debug_assert!(atomic.load(Relaxed) & !RESERVED_MASK != compare);
         }
         Backend::None => unreachable!(),
     }
@@ -78,7 +74,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     match BACKEND.get() {
         Backend::Wait(_) => futex::store_and_wake(atomic, new),
         Backend::Keyed(_) => {
-            let wake_count = atomic.swap(new, Ordering::Release) & RESERVED_MASK;
+            let wake_count = atomic.swap(new, Release) & RESERVED_MASK;
             let key = atomic as *const AtomicUsize as PVOID;
             release_keyed_events(key, wake_count);
         }
@@ -99,43 +95,38 @@ pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
     match BACKEND.get() {
         Backend::Wait(_) => futex::park(atomic, timeout),
         Backend::Keyed(_) => {
-            let mut current = atomic.load(Ordering::SeqCst);
-            loop {
-                if current != NOT_PARKED {
-                    panic!(
-                        "Tried to call park on an atomic while \
-                         another thread is already parked on it"
-                    );
+            match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
+                Ok(_) => {}
+                Err(NOTIFIED) => {
+                    atomic.store(NOT_PARKED, Relaxed);
+                    return;
                 }
-                match atomic.compare_exchange_weak(
-                    current,
-                    current | PARKED,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                ) {
-                    Ok(_) => break,
-                    Err(x) => current = x,
-                }
-            }
+                Err(_) => panic!(
+                    "Tried to call park on an atomic while \
+                     another thread is already parked on it"
+                ),
+            };
             let key = atomic as *const AtomicI32 as PVOID;
             loop {
                 let r = wait_for_keyed_event(key, timeout);
                 if timeout.is_some() {
                     // We don't guarantee there are no spurious wakeups when there was a timeout
                     // supplied.
-                    atomic.store(NOT_PARKED, Ordering::Relaxed);
-                    return;
+                    atomic.store(NOT_PARKED, Relaxed);
+                    break;
                 }
                 if let WakeupReason::Unknown = r {
                     // The wakeup was not caused by an alert ot timeout, we know (almost) for sure
                     // if the status is set to NOTIFIED. But this remains inherently racy, see
                     // the `compare_and_wait` implementation.
-                    if atomic.load(Ordering::Relaxed) == NOTIFIED {
+                    if atomic
+                        .compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed)
+                        .is_ok()
+                    {
                         break;
                     }
                 }
             }
-            atomic.store(NOT_PARKED, Ordering::Relaxed);
         }
         Backend::None => unreachable!(),
     }
@@ -145,23 +136,10 @@ pub(crate) fn unpark(atomic: &AtomicI32) {
     match BACKEND.get() {
         Backend::Wait(_) => futex::unpark(atomic),
         Backend::Keyed(_) => {
-            let current = atomic.load(Ordering::SeqCst);
-            if atomic
-                .compare_exchange(
-                    current,
-                    NOTIFIED,
-                    Ordering::Relaxed,
-                    Ordering::Relaxed,
-                )
-                .is_ok()
-            {
-                // We were unable to switch the state to `NOTIFIED`; Some other thread must be in
-                // the process of unparking it. Either way the parked thread is being waked, and
-                // there is nothing for us to do.
-                return;
+            if atomic.swap(NOTIFIED, Release) == PARKED {
+                let key = atomic as *const AtomicI32 as PVOID;
+                release_keyed_events(key, 1);
             }
-            let key = atomic as *const AtomicI32 as PVOID;
-            release_keyed_events(key, 1);
         }
         Backend::None => unreachable!(),
     }
@@ -242,7 +220,7 @@ impl BackendStatic {
     }
 
     pub(crate) fn get(&self) -> Backend {
-        if self.status.load(Ordering::Acquire) == READY {
+        if self.status.load(Acquire) == READY {
             return self.backend.get();
         }
         self.init()
@@ -250,9 +228,7 @@ impl BackendStatic {
 
     #[inline(never)]
     fn init(&self) -> Backend {
-        let mut status = self
-            .status
-            .compare_and_swap(EMPTY, INITIALIZING, Ordering::Acquire);
+        let mut status = self.status.compare_and_swap(EMPTY, INITIALIZING, Acquire);
         if status == EMPTY {
             let backend = if let Some(res) = ProbeWaitAddress() {
                 Backend::Wait(res)
@@ -265,14 +241,14 @@ impl BackendStatic {
                 );
             };
             self.backend.set(backend);
-            self.status.store(READY, Ordering::Release);
+            self.status.store(READY, Release);
             return backend;
         }
         while status != READY {
             // The one place were we can't really do better than a spin loop is while another
             // thread is loading the functions that provide parking primitives ;-).
             spin_loop_hint();
-            status = self.status.load(Ordering::Acquire);
+            status = self.status.load(Acquire);
         }
         self.backend.get()
     }
