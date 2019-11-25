@@ -1,6 +1,6 @@
 //! `valet_boy` provides a cross-platform abstraction over thread parking. The goal is to provide an
 //! abstraction with little overhead, which is `no_std`-compatible and requires little overhead.
-#![cfg_attr(not(target_vendor = "fortanix"), no_std)]
+#![cfg_attr(not(any(test, target_vendor = "fortanix")), no_std)]
 #![cfg_attr(
     all(target_arch = "wasm32", target_feature = "atomics"),
     feature(stdsimd)
@@ -218,3 +218,31 @@ pub const FREE_BITS: usize = 5;
 pub const RESERVED_BITS: usize = mem::size_of::<usize>() * 8 - FREE_BITS;
 /// Mask matching the bits which are reserved while using the [`Waiters`](trait.Waiters.html) trait.
 pub const RESERVED_MASK: usize = (1 << RESERVED_BITS) - 1;
+
+#[cfg(test)]
+mod test {
+    use crate::Parker;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::thread::spawn;
+
+    const TEST_ROUNDS: usize = 20_000;
+
+    #[test]
+    fn unpark_ordering() {
+        static FLAG: AtomicBool = AtomicBool::new(false);
+        static PARKER: Parker = Parker::new();
+
+        for _ in 0..TEST_ROUNDS {
+            spawn(|| {
+                PARKER.unpark();
+                FLAG.store(true, Ordering::Relaxed);
+                PARKER.unpark();
+            });
+
+            while !FLAG.load(Ordering::Relaxed) {
+                PARKER.park(None);
+            }
+            FLAG.store(false, Ordering::Relaxed);
+        }
+    }
+}
