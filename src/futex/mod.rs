@@ -1,3 +1,4 @@
+use core::sync::atomic::Ordering::{Relaxed, Release};
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -140,7 +141,6 @@ const UNCOMPARED_LO_BITS: usize = 0;
 #[cfg(all(target_pointer_width = "64", target_endian = "big"))]
 const UNCOMPARED_LO_BITS: usize = 32;
 
-
 //
 // Implementation of the Parker trait
 //
@@ -150,59 +150,37 @@ pub(crate) type Parker = AtomicI32;
 const NOT_PARKED: i32 = 0x0;
 const PARKED: i32 = 0x1;
 const NOTIFIED: i32 = 0x2;
-const STATE_MASK: i32 = 0x3;
 
 pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
-    let mut current = atomic.load(Ordering::SeqCst);
+    match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
+        Ok(_) => {}
+        Err(NOTIFIED) => {
+            atomic.store(NOT_PARKED, Relaxed);
+            return;
+        }
+        Err(_) => panic!(
+            "Tried to call park on an atomic while \
+             another thread is already parked on it"
+        ),
+    };
     loop {
-        match current & STATE_MASK {
-            // Good to go
-            NOT_PARKED => {}
-            // Some other thread unparked us even before we were able to park ourselves.
-            NOTIFIED => break,
-            // There is already some thread parked on this atomic; calling `park` on it is not
-            // allowed by the API.
-            PARKED | _ => panic!(),
-        }
-
-        let old = atomic.compare_and_swap(current, current | PARKED, Ordering::Relaxed);
-        if old != current {
-            // `self` was modified by some other thread, restart from the beginning.
-            current = old;
-            continue;
-        }
-
+        atomic.wait(PARKED, timeout);
         if timeout.is_some() {
-            atomic.wait(current | PARKED, timeout);
-        } else {
-            while current & STATE_MASK != NOTIFIED {
-                atomic.wait(current | PARKED, None);
-                // Load `self` so the next iteration of this loop can make sure this wakeup was not
-                // spurious, and otherwise park again.
-                current = atomic.load(Ordering::Relaxed);
-            }
+            // We don't guarantee there are no spurious wakeups when there was a timeout supplied.
+            atomic.store(NOT_PARKED, Relaxed);
+            return;
         }
-        break;
+        if atomic
+            .compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed)
+            .is_ok()
+        {
+            break;
+        }
     }
-    // Reset state to `NOT_PARKED`.
-    &atomic.fetch_and(!STATE_MASK, Ordering::Relaxed);
 }
 
 pub(crate) fn unpark(atomic: &AtomicI32) {
-    let current = atomic.load(Ordering::SeqCst);
-    if atomic
-        .compare_exchange(
-            (current & !STATE_MASK) | PARKED,
-            (current & !STATE_MASK) | NOTIFIED,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        )
-        .is_err()
-    {
-        // We were unable to switch the state from `PARKED` to `NOTIFIED`. Either there is no
-        // thread parked, or some other thread must be in the process of unparking it. In both cases
-        // there is nothing for us to do.
-        return;
+    if atomic.swap(NOTIFIED, Release) == PARKED {
+        atomic.wake();
     }
-    atomic.wake();
 }

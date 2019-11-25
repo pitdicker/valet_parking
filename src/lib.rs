@@ -198,12 +198,24 @@ impl Parker {
     ///   any concern. If the timeout overflows the maximum `park` will acts as if no timeout was
     ///   supplied.
     ///
+    /// # Atomic ordering
+    /// `park` will perform an atomic store with `Release` ordering before parking the thread. This
+    /// guarantees that any preparations done before the call to `park` will actually have been
+    /// executed before it. Neither the processor nor the compiler are allowed to reorder them to
+    /// happen later.
+    ///
     /// [`unpark`]: #method.unpark
     pub fn park(&self, timeout: Option<Duration>) {
         imp::park(&self.inner, timeout)
     }
 
     /// Unparks the waiting thread, if there is one.
+
+    ///
+    /// # Atomic ordering
+    /// `unpark` will perform an atomic store with `Release` ordering. This guarantees that any
+    /// preparations done before unparking the thread will actually be executed before the `unpark`.
+    /// Neither the processor nor the compiler are not allowed to reorder them to happen later.
     #[allow(unused_unsafe)]
     pub fn unpark(&self) {
         unsafe { imp::unpark(&self.inner) }
