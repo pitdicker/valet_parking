@@ -1,4 +1,3 @@
-use core::mem;
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::time::Duration;
 
@@ -65,7 +64,7 @@ pub(crate) trait Futex {
 //
 // Implementation of the Waiters trait
 //
-const HAS_WAITERS: usize = 0x1 << UNCOMPARED_BITS;
+const HAS_WAITERS: usize = 0x1 << UNCOMPARED_LO_BITS;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
     loop {
         match atomic.compare_exchange_weak(
@@ -86,7 +85,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
     loop {
         unsafe {
             let atomic_i32 = get_i32_ref(atomic);
-            let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_BITS) as u32 as i32;
+            let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_LO_BITS) as u32 as i32;
             atomic_i32.wait(compare, None);
         }
         if atomic.load(Ordering::Relaxed) != (compare | HAS_WAITERS) {
@@ -104,31 +103,43 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     }
 }
 
-// Transmuting an `AtomicUsize` to an `AtomicI32` is a bit of a questionable operations. I believe
-// it is safe because:
-// * On 32 bit it is a no-op.
-// * On 64 bit:
-//   - The size of the `AtomicI32` is less then `AtomicUsize`;
-//   - The alignment of the `AtomicUsize` is greater than or equal to `AtomicI32`;
-//   - We take care of endianness by taking the porting of the `AtomicUsize` that contains the
-//     non-reserved bits.
-//   - There are no stores done on the resulting atomic, it is only passed to the kernel to do one
-//     load for the comparison.
-// * We don't need to support 16-bit pointers, as all the operating systems that offer futex-like
-//   interfaces are 32-bit+.
-#[cfg(any(
-    target_pointer_width = "32",
-    all(target_pointer_width = "64", target_endian = "big")
-))]
+/// The `Waiters` trait has to be implemented on an `AtomicUsize` because we need a pointer-sized
+/// value for some implementations. But the `Futex` trait is implemented on an `AtomicI32` because
+/// that is wait the OS interface relies on. On 64-bit platforms we are going to crate a reference
+/// to only a 32-bit portion of the `AtomicUsize`.
+///
+/// There are the obvious concerns about size, alignment, and endianness. But this is above all a
+/// questionable operation because it is not explicitly supported by the C++ memory model. There is
+/// little information on what happens when you do atomic operations on only a part of the atomic.
+/// One paper is [Mixed-size Concurrency: ARM, POWER, C/C++11, and SC][Mixed-size Concurrency].
+///
+/// We should not assume that the kernel does anything stonger with the atomic than a relaxed load.
+/// But it may also do a CAS loop that writes to the atomic, as long as the value is not modified
+/// (DragonFly BSD is a documented case).
+///
+/// The one thing to worry about for us is preserving *modification order consistency* of the atomic
+/// integer. This normally relies on the integer having the same address. The processor may not
+/// track 'overlapping footprints' of the smaller integer (as the paper calls it). So when the
+/// smaller integer part of an atomic starts at a different address, we would have to use orderings
+/// such as Release or SeqCst to prevent reordering of operations on the smaller integer with
+/// operations on the full atomic.
+///
+/// As we don't control the memory orderings the kernel uses, our only option is to use the part of
+/// the atomic that starts at the same address. On little-endian this are the 32 low-order bits, on
+/// big-endian the 32 high-order bits. Notably this part may not contain the (high-order) bits that
+/// match the `compare` value of `compare_and_wait`.
+///
+/// Mixed-size Concurrency: https://hal.inria.fr/hal-01413221/document
 unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
     &*(ptr_sized as *const AtomicUsize as *const AtomicI32)
 }
+#[cfg(target_pointer_width = "32")]
+const UNCOMPARED_LO_BITS: usize = 0;
 #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
-    &*((ptr_sized as *const AtomicUsize as *const AtomicI32).offset(1))
-}
+const UNCOMPARED_LO_BITS: usize = 0;
+#[cfg(all(target_pointer_width = "64", target_endian = "big"))]
+const UNCOMPARED_LO_BITS: usize = 32;
 
-const UNCOMPARED_BITS: usize = 8 * (mem::size_of::<usize>() - mem::size_of::<u32>());
 
 //
 // Implementation of the Parker trait
