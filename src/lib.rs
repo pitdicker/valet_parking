@@ -1,6 +1,6 @@
 //! `valet_boy` provides a cross-platform abstraction over thread parking. The goal is to provide an
 //! abstraction with little overhead, which is `no_std`-compatible and requires little overhead.
-#![cfg_attr(not(any(test, target_vendor = "fortanix")), no_std)]
+#![cfg_attr(not(any(test, feature = "std", target_vendor = "fortanix")), no_std)]
 #![cfg_attr(
     all(target_arch = "wasm32", target_feature = "atomics"),
     feature(stdsimd)

@@ -1,27 +1,29 @@
 use core::sync::atomic::Ordering::{Relaxed, Release};
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::time::Duration;
+#[cfg(feature = "std")]
+use std::time::Instant;
 
 use crate::RESERVED_MASK;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-mod darwin;
+mod darwin; // relative
 #[cfg(target_os = "dragonfly")]
-mod dragonfly;
+mod dragonfly; // relative
 #[cfg(target_os = "freebsd")]
-mod freebsd;
+mod freebsd; // relative/absolute, monotonic/realtime
 #[cfg(target_os = "fuchsia")]
-mod fuchsia;
+mod fuchsia; // relative/absolute?
 #[cfg(any(target_os = "linux", target_os = "android"))]
-mod linux;
+mod linux; // relative/absolute, monotonic/realtime
 #[cfg(target_os = "openbsd")]
-mod openbsd;
+mod openbsd; // relative
 #[cfg(target_os = "redox")]
-mod redox;
+mod redox; // relative monotonic
 #[cfg(all(target_arch = "wasm32", target_feature = "atomics"))]
-mod wasm_atomic;
+mod wasm_atomic; // relative
 #[cfg(windows)]
-mod windows;
+mod windows; // relative (keyedevent also absolute)
 
 /// Reason the operating system provided for waking up a thread. Because of the limited guarantees
 /// of some platforms, this turns out not to be all that useful except for documentation purposes.
@@ -49,6 +51,11 @@ pub(crate) trait Futex {
     ///
     /// This function does not guard against spurious wakeups.
     fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason;
+
+    #[cfg(feature = "std")]
+    fn wait_until(&self, compare: i32, deadline: Instant) -> WakeupReason {
+        unimplemented!();
+    }
 
     /// Wake all threads waiting on `self`, and set `self` to `new`.
     ///

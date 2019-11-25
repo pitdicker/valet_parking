@@ -17,6 +17,7 @@ categories = ["Concurrency", "no_std"]
 exclude = [".travis.yml"]
 
 [features]
+std = []
 fallback = []
 
 [target.'cfg(windows)'.dependencies]

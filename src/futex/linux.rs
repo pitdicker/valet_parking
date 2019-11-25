@@ -2,6 +2,8 @@ use core::cmp;
 use core::ptr;
 use core::sync::atomic::AtomicI32;
 use core::time::Duration;
+#[cfg(feature = "std")]
+use std::time::Instant;
 
 use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
@@ -43,6 +45,46 @@ impl Futex for AtomicI32 {
         }
     }
 
+    #[cfg(feature = "std")]
+    fn wait_until(&self, compare: i32, deadline: Instant) -> WakeupReason {
+        let ptr = self as *const AtomicI32 as *mut i32;
+        let ts = convert_timeout(deadline);
+        let ts_ptr = ts
+            .as_ref()
+            .map(|ts_ref| ts_ref as *const _)
+            .unwrap_or(ptr::null());
+        let r = unsafe {
+            futex(
+                ptr,
+                libc::FUTEX_WAIT_BITSET | libc::FUTEX_PRIVATE_FLAG,
+                compare,
+                ts_ptr,
+                ptr::null_mut(),
+                FUTEX_BITSET_MATCH_ANY,
+            )
+        };
+        match r {
+            0 => WakeupReason::Unknown,
+            -1 => match errno() {
+                libc::EAGAIN => WakeupReason::NoMatch,
+                libc::EINTR => WakeupReason::Interrupt,
+                libc::ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                e => {
+                    debug_assert!(false, "Unexpected errno of futex syscall: {}", e);
+                    WakeupReason::Unknown
+                }
+            },
+            r => {
+                debug_assert!(
+                    false,
+                    "Unexpected return value of futex syscall: {}",
+                    r
+                );
+                WakeupReason::Unknown
+            }
+        }
+    }
+
     #[inline]
     fn wake(&self) -> usize {
         let ptr = self as *const AtomicI32 as *mut i32;
@@ -73,6 +115,8 @@ unsafe fn futex(
     libc::syscall(libc::SYS_futex, uaddr, futex_op, val, timeout, uaddr2, val3)
 }
 
+const FUTEX_BITSET_MATCH_ANY: libc::c_int = !0;
+
 // x32 Linux uses a non-standard type for tv_nsec in timespec.
 // See https://sourceware.org/bugzilla/show_bug.cgi?id=16437
 #[cfg(all(target_arch = "x86_64", target_pointer_width = "32"))]
@@ -83,6 +127,22 @@ type tv_nsec_t = i64;
 type tv_nsec_t = libc::c_long;
 
 fn convert_timeout(timeout: Option<Duration>) -> Option<libc::timespec> {
+    match timeout {
+        Some(duration) => {
+            if duration.as_secs() > libc::time_t::max_value() as u64 {
+                return None;
+            }
+            Some(libc::timespec {
+                tv_sec: duration.as_secs() as libc::time_t,
+                tv_nsec: duration.subsec_nanos() as tv_nsec_t,
+            })
+        }
+        None => None,
+    }
+}
+
+fn convert_deadline(deadline: Instant) -> libc::timespec {
+    let duration = deadline.duration_since(UNIX_EPOCH)
     match timeout {
         Some(duration) => {
             if duration.as_secs() > libc::time_t::max_value() as u64 {
