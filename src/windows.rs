@@ -17,7 +17,7 @@
 use core::cell::Cell;
 use core::mem;
 use core::ptr;
-use core::sync::atomic::{spin_loop_hint, AtomicUsize, Ordering};
+use core::sync::atomic::{spin_loop_hint, AtomicI32, AtomicUsize, Ordering};
 use core::time::Duration;
 
 use winapi::shared::basetsd::SIZE_T;
@@ -28,7 +28,7 @@ use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::winnt::{ACCESS_MASK, BOOLEAN, EVENT_ALL_ACCESS, HANDLE, LPCSTR, PHANDLE, PVOID};
 
 use crate::futex::{self, WakeupReason};
-use crate::{RESERVED_BITS, RESERVED_MASK};
+use crate::RESERVED_MASK;
 
 //
 // Implementation of the Waiters trait
@@ -62,8 +62,9 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
             // may hang indefinitely.
             // There is no way to prevent this race, but as an extra protection we check the return
             // value and repark when the wakeup is definitely not due to the event.
+            let key = atomic as *const AtomicUsize as PVOID;
             loop {
-                if let WakeupReason::Unknown = wait_for_keyed_event(atomic, None) {
+                if let WakeupReason::Unknown = wait_for_keyed_event(key, None) {
                     break;
                 }
             }
@@ -78,7 +79,8 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
         Backend::Wait(_) => futex::store_and_wake(atomic, new),
         Backend::Keyed(_) => {
             let wake_count = atomic.swap(new, Ordering::Release) & RESERVED_MASK;
-            release_keyed_events(atomic, wake_count);
+            let key = atomic as *const AtomicUsize as PVOID;
+            release_keyed_events(key, wake_count);
         }
         Backend::None => unreachable!(),
     }
@@ -87,19 +89,19 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 //
 // Implementation of the Parker trait
 //
-pub(crate) type Parker = AtomicUsize;
+pub(crate) type Parker = AtomicI32;
 
-const NOT_PARKED: usize = 0x0 << (RESERVED_BITS - 2);
-const PARKED: usize = 0x1 << (RESERVED_BITS - 2);
-const NOTIFIED: usize = 0x2 << (RESERVED_BITS - 2);
+const NOT_PARKED: i32 = 0x0;
+const PARKED: i32 = 0x1;
+const NOTIFIED: i32 = 0x2;
 
-pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
+pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
     match BACKEND.get() {
         Backend::Wait(_) => futex::park(atomic, timeout),
         Backend::Keyed(_) => {
             let mut current = atomic.load(Ordering::SeqCst);
             loop {
-                if current & STATE_MASK != NOT_PARKED {
+                if current != NOT_PARKED {
                     panic!(
                         "Tried to call park on an atomic while \
                          another thread is already parked on it"
@@ -115,31 +117,31 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
                     Err(x) => current = x,
                 }
             }
+            let key = atomic as *const AtomicI32 as PVOID;
             loop {
-                let r = wait_for_keyed_event(atomic, timeout);
+                let r = wait_for_keyed_event(key, timeout);
                 if timeout.is_some() {
                     // We don't guarantee there are no spurious wakeups when there was a timeout
-                    // supplied. Reset state to `NOT_PARKED`.
-                    &atomic.fetch_and(!STATE_MASK, Ordering::Relaxed);
+                    // supplied.
+                    atomic.store(NOT_PARKED, Ordering::Relaxed);
                     return;
                 }
                 if let WakeupReason::Unknown = r {
                     // The wakeup was not caused by an alert ot timeout, we know (almost) for sure
                     // if the status is set to NOTIFIED. But this remains inherently racy, see
                     // the `compare_and_wait` implementation.
-                    if atomic.load(Ordering::Relaxed) & STATE_MASK == NOTIFIED {
+                    if atomic.load(Ordering::Relaxed) == NOTIFIED {
                         break;
                     }
                 }
             }
-            // Reset state to `NOT_PARKED`.
-            &atomic.fetch_and(!STATE_MASK, Ordering::Relaxed);
+            atomic.store(NOT_PARKED, Ordering::Relaxed);
         }
         Backend::None => unreachable!(),
     }
 }
 
-pub(crate) fn unpark(atomic: &AtomicUsize) {
+pub(crate) fn unpark(atomic: &AtomicI32) {
     match BACKEND.get() {
         Backend::Wait(_) => futex::unpark(atomic),
         Backend::Keyed(_) => {
@@ -147,7 +149,7 @@ pub(crate) fn unpark(atomic: &AtomicUsize) {
             if atomic
                 .compare_exchange(
                     current,
-                    (current & !RESERVED_MASK) | NOTIFIED,
+                    NOTIFIED,
                     Ordering::Relaxed,
                     Ordering::Relaxed,
                 )
@@ -158,18 +160,15 @@ pub(crate) fn unpark(atomic: &AtomicUsize) {
                 // there is nothing for us to do.
                 return;
             }
-            release_keyed_events(atomic, 1);
+            let key = atomic as *const AtomicI32 as PVOID;
+            release_keyed_events(key, 1);
         }
         Backend::None => unreachable!(),
     }
 }
 
-fn wait_for_keyed_event(atomic: &AtomicUsize, timeout: Option<Duration>) -> WakeupReason {
+fn wait_for_keyed_event(key: PVOID, timeout: Option<Duration>) -> WakeupReason {
     if let Backend::Keyed(f) = BACKEND.get() {
-        // We need to provide some unique key to wait on. The least significant bit must be
-        // zero, it is appearently used as a flag bit. The address of `atomic` seems like a
-        // good candidate.
-        let key = atomic as *const AtomicUsize as PVOID;
         let nt_timeout = convert_timeout_100ns(timeout);
         let timeout_ptr = nt_timeout
             .map(|t_ref| t_ref as *mut _)
@@ -195,10 +194,8 @@ fn wait_for_keyed_event(atomic: &AtomicUsize, timeout: Option<Duration>) -> Wake
     }
 }
 
-fn release_keyed_events(atomic: &AtomicUsize, wake_count: usize) {
+fn release_keyed_events(key: PVOID, wake_count: usize) {
     if let Backend::Keyed(f) = BACKEND.get() {
-        // Recreate the key; the address of self.
-        let key = atomic as *const AtomicUsize as PVOID;
         for _ in 0..wake_count {
             (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
         }
