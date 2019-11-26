@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 use core::sync::atomic::{AtomicUsize, Ordering};
 use core::time::Duration;
 
-use crate::waiter_queue;
+use crate::imp::waiter_queue;
 use crate::{FREE_BITS, RESERVED_MASK};
 
 pub(crate) use waiter_queue::{compare_and_wait, store_and_wake};

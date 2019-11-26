@@ -27,67 +27,10 @@ use core::time::Duration;
 ))]
 pub mod futex;
 
-// All platforms for which the futex interface is always available.
-#[cfg(all(
-    any(
-        target_os = "android",
-        target_os = "dragonfly",
-        target_os = "freebsd",
-        target_os = "fuchsia",
-        target_os = "linux",
-        target_os = "openbsd",
-        target_os = "redox",
-        all(target_arch = "wasm32", target_feature = "atomics")
-    ),
-    not(feature = "fallback")
-))]
-use futex as imp;
-
-// Windows needs a fallback.
-#[cfg(windows)]
-mod windows;
-#[cfg(windows)]
-use windows as imp;
-
 #[cfg(unix)]
 mod errno;
 
-#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "fallback")))]
-mod darwin;
-
-#[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "fallback")))]
-use darwin as imp;
-
-#[cfg(unix)]
-#[allow(unused)]
-mod posix;
-
-#[cfg(all(
-    unix,
-    any(
-        not(any(
-            target_os = "android",
-            target_os = "dragonfly",
-            target_os = "freebsd",
-            target_os = "fuchsia",
-            target_os = "linux",
-            target_os = "ios",
-            target_os = "macos",
-            target_os = "openbsd",
-            target_os = "redox"
-        )),
-        feature = "fallback"
-    )
-))]
-use posix as imp;
-
-#[allow(unused)]
-mod waiter_queue;
-
-#[cfg(target_vendor = "fortanix")]
-mod fortanix;
-#[cfg(target_vendor = "fortanix")]
-use fortanix as imp;
+mod imp;
 
 /// Multiple threads can wait on a single [`AtomicUsize`] until one thread wakes them all up at
 /// once.
