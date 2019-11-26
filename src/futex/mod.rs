@@ -131,7 +131,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 /// match the `compare` value of `compare_and_wait`.
 ///
 /// Mixed-size Concurrency: https://hal.inria.fr/hal-01413221/document
-unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
+pub(crate) unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
     &*(ptr_sized as *const AtomicUsize as *const AtomicI32)
 }
 #[cfg(target_pointer_width = "32")]
