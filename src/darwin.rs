@@ -34,9 +34,11 @@ pub(crate) unsafe fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 //
 // Implementation of the Parker trait
 //
+pub(crate) type Parker = AtomicUsize;
+
 pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
     if has_ulock() {
-        futex::park(atomic, timeout)
+        futex::park(unsafe { futex::get_i32_ref(atomic) }, timeout)
     } else {
         posix::park(atomic, timeout)
     }
@@ -44,7 +46,7 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
 
 pub(crate) unsafe fn unpark(atomic: &AtomicUsize) {
     if has_ulock() {
-        futex::unpark(atomic)
+        futex::unpark(futex::get_i32_ref(atomic))
     } else {
         posix::unpark(atomic)
     }
