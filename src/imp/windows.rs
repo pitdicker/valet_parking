@@ -133,16 +133,32 @@ pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
     };
     loop {
         match WINDOWS_BACKEND.load(Ordering::Relaxed) {
-            BACKEND_WAIT_ON_ADDRESS => atomic.wait(PARKED, timeout),
+            BACKEND_WAIT_ON_ADDRESS => {
+                atomic.wait(PARKED, timeout);
+                if timeout.is_some() {
+                    // We don't guarantee there are no spurious wakeups when there was a timeout
+                    // supplied.
+                    atomic.store(NOT_PARKED, Relaxed);
+                    break;
+                }
+                if atomic.compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed).is_ok() {
+                    break;
+                }
+            }
             BACKEND_NT_KEYED_EVENTS => {
                 let key = atomic as *const AtomicI32 as PVOID;
                 match wait_for_keyed_event(key, timeout) {
                     WakeupReason::Unknown => {},
-                    _ if timeout.is_none() => {
-                    // FIXME: invert
-                    /// The wakeup was not caused by an alert ot timeout, we know (almost) for sure
-                    // if the status is set to NOTIFIED. But this remains inherently racy, see
-                    // the `compare_and_wait` implementation.
+                    WakeupReason::TimedOut => {
+                        // If another thread calls `NtReleaseKeyedEvent` now it will hang
+                        // indefinitely.
+                        atomic.store(NOT_PARKED, Relaxed);
+                        return;
+                    }
+                    _ => {
+                        // The wakeup was definitely not caused by a release event.
+                        // Even if the NOTIFIED value is set we have to wait again, otherwise
+                        // the waker thread will hang.
                         continue;
                     }
                 }
