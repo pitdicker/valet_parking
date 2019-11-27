@@ -11,8 +11,10 @@ use core::time::Duration;
 use crate::futex::{Futex, WakeupReason};
 
 impl Futex for AtomicI32 {
+    type Integer = i32;
+
     #[inline]
-    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut i32;
         let timeout_ns = convert_timeout(timeout);
         let r = unsafe { wasm32::i32_atomic_wait(ptr, compare, timeout_ns) };
