@@ -67,21 +67,9 @@ pub(crate) trait Futex {
 //
 const HAS_WAITERS: usize = 0x1 << UNCOMPARED_LO_BITS;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
-    loop {
-        match atomic.compare_exchange_weak(
-            compare,
-            compare | HAS_WAITERS,
-            Ordering::Relaxed,
-            Ordering::Relaxed,
-        ) {
-            Ok(_) => break,
-            Err(current) => {
-                if current & !RESERVED_MASK != compare {
-                    return;
-                }
-                debug_assert!(current == compare | HAS_WAITERS);
-            }
-        }
+    let old = atomic.compare_and_swap(compare, compare | HAS_WAITERS, Ordering::Relaxed);
+    if old & !RESERVED_MASK != compare {
+        return;
     }
     loop {
         unsafe {
