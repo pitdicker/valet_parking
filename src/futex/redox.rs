@@ -10,8 +10,10 @@ use syscall::error::{Error, EAGAIN, EINTR, ETIMEDOUT};
 use syscall::flag::{FUTEX_WAIT, FUTEX_WAKE};
 
 impl Futex for AtomicI32 {
+    type Integer = i32;
+
     #[inline]
-    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut i32;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts

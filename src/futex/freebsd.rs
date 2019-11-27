@@ -12,8 +12,10 @@ use crate::futex::{Futex, WakeupReason};
 // threads. This has the nice side effect that it takes a operates on an i32 instead, which makes it
 // the similar to futex implementations on other platforms.
 impl Futex for AtomicI32 {
+    type Integer = i32;
+
     #[inline]
-    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts

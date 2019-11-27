@@ -7,8 +7,10 @@ use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
 
 impl Futex for AtomicI32 {
+    type Integer = i32;
+
     #[inline]
-    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason {
+    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
         let ptr = self as *const AtomicI32 as *mut libc::c_void;
         let compare = compare as u32 as u64;
         let timeout_us = convert_timeout_us(timeout);

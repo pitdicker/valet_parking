@@ -42,13 +42,15 @@ pub(crate) enum WakeupReason {
 }
 
 pub(crate) trait Futex {
+    type Integer;
+
     /// Park the current thread if `self` equals `compare`. Most implementations will only compare
     /// the 32 high-order bits.
     ///
     /// `timeout` is relative duration, not an absolute deadline.
     ///
     /// This function does not guard against spurious wakeups.
-    fn wait(&self, compare: i32, timeout: Option<Duration>) -> WakeupReason;
+    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason;
 
     /// Wake all threads waiting on `self`, and set `self` to `new`.
     ///
