@@ -1,6 +1,7 @@
-//! Copied from `libstd/sys/unix/os.rs`.
 #![allow(unused)]
 
+// Copied from `libstd/sys/unix/os.rs`.
+#[cfg(unix)]
 extern "C" {
     #[cfg(not(target_os = "dragonfly"))]
     #[cfg_attr(
@@ -31,13 +32,13 @@ extern "C" {
     fn errno_location() -> *mut libc::c_int;
 }
 
-#[cfg(not(target_os = "dragonfly"))]
-pub fn errno() -> i32 {
+#[cfg(all(unix, not(target_os = "dragonfly")))]
+pub(crate) fn errno() -> i32 {
     unsafe { (*errno_location()) as i32 }
 }
 
 #[cfg(target_os = "dragonfly")]
-pub fn errno() -> i32 {
+pub(crate) fn errno() -> i32 {
     extern "C" {
         #[thread_local]
         static errno: libc::c_int;

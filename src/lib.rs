@@ -49,9 +49,6 @@ mod windows;
 #[cfg(windows)]
 use windows as imp;
 
-#[cfg(unix)]
-mod errno;
-
 #[cfg(all(any(target_os = "macos", target_os = "ios"), not(feature = "fallback")))]
 mod darwin;
 
@@ -88,6 +85,8 @@ mod waiter_queue;
 mod fortanix;
 #[cfg(target_vendor = "fortanix")]
 use fortanix as imp;
+
+mod utils;
 
 /// Multiple threads can wait on a single [`AtomicUsize`] until one thread wakes them all up at
 /// once.

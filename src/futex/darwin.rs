@@ -3,8 +3,8 @@
 use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
+use crate::utils::errno;
 
 impl Futex for AtomicI32 {
     type Integer = i32;
