@@ -3,8 +3,8 @@ use core::ptr;
 use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
-use crate::errno::errno;
 use crate::futex::{Futex, WakeupReason};
+use crate::utils::errno;
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
