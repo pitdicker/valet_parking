@@ -1,4 +1,6 @@
 #![allow(unused)]
+use core::cell::UnsafeCell;
+use core::sync::atomic::*;
 
 // Copied from `libstd/sys/unix/os.rs`.
 #[cfg(unix)]
@@ -46,3 +48,32 @@ pub(crate) fn errno() -> i32 {
 
     unsafe { errno as i32 }
 }
+
+pub(crate) trait AtomicAsMutPtr {
+    type Integer;
+
+    fn as_mut_ptr(&self) -> *mut Self::Integer;
+}
+
+macro_rules! imp_as_mut_ptr {
+    ($atomic_type:ident, $int_type:ident) => {
+        impl AtomicAsMutPtr for $atomic_type {
+            type Integer = $int_type;
+
+            fn as_mut_ptr(&self) -> *mut Self::Integer {
+                unsafe { (&*(self as *const $atomic_type as *const UnsafeCell<$int_type>)).get() }
+            }
+        }
+    };
+}
+imp_as_mut_ptr!(AtomicUsize, usize);
+imp_as_mut_ptr!(AtomicIsize, isize);
+imp_as_mut_ptr!(AtomicU64, u64);
+imp_as_mut_ptr!(AtomicI64, i64);
+imp_as_mut_ptr!(AtomicU32, u32);
+imp_as_mut_ptr!(AtomicI32, i32);
+imp_as_mut_ptr!(AtomicU16, u16);
+imp_as_mut_ptr!(AtomicI16, i16);
+imp_as_mut_ptr!(AtomicU8, u8);
+imp_as_mut_ptr!(AtomicI8, i8);
+imp_as_mut_ptr!(AtomicBool, bool);
