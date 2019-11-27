@@ -3,14 +3,14 @@ use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
-use crate::utils::errno;
+use crate::utils::{errno, AtomicAsMutPtr};
 
 impl Futex for AtomicI32 {
     type Integer = i32;
 
     #[inline]
     fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self as *const AtomicI32 as *const i32;
+        let ptr = self.as_mut_ptr() as *mut libc::c_int;
         let ts = convert_timeout_us(timeout);
         let r = unsafe { umtx_sleep(ptr, compare, ts) };
         match r {
@@ -37,7 +37,7 @@ impl Futex for AtomicI32 {
 
     #[inline]
     fn wake(&self) -> usize {
-        let ptr = self as *const AtomicI32 as *const i32;
+        let ptr = self.as_mut_ptr() as *mut libc::c_int;
         let r = unsafe { umtx_wakeup(ptr, 0) };
         debug_assert!(
             r >= 0,
@@ -49,14 +49,19 @@ impl Futex for AtomicI32 {
 }
 
 extern "C" {
+    // Note: our function signature does not match the one from the man page, which says that `ptr`
+    // can be `*const`. Yet at the same time it says:
+    // "WARNING! In order to properly interlock against fork(), this function will do an atomic
+    // read-modify-write on the underlying memory by atomically adding the value 0 to it."
+    // So let's make the functions take a `*mut` pointer like on all other operating systems.
     fn umtx_sleep(
-        uaddr: *const libc::c_int,
-        val: libc::c_int,
+        ptr: *mut libc::c_int,
+        value: libc::c_int,
         timeout: libc::c_int, // microseconds, 0 is indefinite
     ) -> libc::c_int;
 
     fn umtx_wakeup(
-        uaddr: *const libc::c_int,
+        ptr: *mut libc::c_int,
         count: libc::c_int, // 0 will wake up all
     ) -> libc::c_int;
 }

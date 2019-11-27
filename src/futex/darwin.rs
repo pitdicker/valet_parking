@@ -4,14 +4,14 @@ use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
-use crate::utils::errno;
+use crate::utils::{errno, AtomicAsMutPtr};
 
 impl Futex for AtomicI32 {
     type Integer = i32;
 
     #[inline]
     fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self as *const AtomicI32 as *mut libc::c_void;
+        let ptr = self.as_mut_ptr() as *mut libc::c_void;
         let compare = compare as u32 as u64;
         let timeout_us = convert_timeout_us(timeout);
         let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
@@ -39,7 +39,7 @@ impl Futex for AtomicI32 {
 
     #[inline]
     fn wake(&self) -> usize {
-        let ptr = self as *const AtomicI32 as *mut libc::c_void;
+        let ptr = self.as_mut_ptr() as *mut libc::c_void;
         let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
         // Apparently the return value -1 with ENOENT means there were no threads waiting.
         // Libdispatch considers it a success, so lets do the same.

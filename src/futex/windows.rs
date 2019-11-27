@@ -9,6 +9,7 @@ use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::PVOID;
 
 use crate::futex::{Futex, WakeupReason};
+use crate::utils::AtomicAsMutPtr;
 use crate::windows::{Backend, BACKEND};
 
 macro_rules! imp_futex {
@@ -16,10 +17,10 @@ macro_rules! imp_futex {
         impl Futex for $atomic_type {
             type Integer = $int_type;
 
-            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(&self, mut compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
                 if let Backend::Wait(f) = BACKEND.get() {
-                    let address = self as *const _ as PVOID;
-                    let compare_address = &compare as *const _ as PVOID;
+                    let address = self.as_mut_ptr() as PVOID;
+                    let compare_address = &mut compare as *mut $int_type as PVOID;
                     let ms = convert_timeout_ms(timeout);
                     let r = (f.WaitOnAddress)(
                         address,
@@ -48,7 +49,8 @@ macro_rules! imp_futex {
 
             fn wake(&self) -> usize {
                 if let Backend::Wait(f) = BACKEND.get() {
-                    (f.WakeByAddressAll)(self as *const _ as PVOID);
+                    let address = self.as_mut_ptr() as PVOID;
+                    (f.WakeByAddressAll)(address);
                     0 // `WakeByAddressAll` does not return the number of woken threads
                 } else {
                     unreachable!();
