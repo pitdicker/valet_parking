@@ -4,13 +4,14 @@ use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
+use crate::utils::AtomicAsMutPtr;
 
 impl Futex for AtomicI32 {
     type Integer = i32;
 
     #[inline]
     fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self as *const AtomicI32 as *mut i32;
+        let ptr = self.as_mut_ptr() as *mut i32;
         let deadline = convert_timeout(timeout);
         let r = unsafe { zx_futex_wait(ptr, compare, deadline) };
         match r {
@@ -26,7 +27,7 @@ impl Futex for AtomicI32 {
 
     #[inline]
     fn wake(&self) -> usize {
-        let ptr = self as *const AtomicI32 as *mut i32;
+        let ptr = self.as_mut_ptr() as *mut i32;
         let wake_count = u32::max_value();
         let r = unsafe { zx_futex_wake(ptr, wake_count) };
         debug_assert!(

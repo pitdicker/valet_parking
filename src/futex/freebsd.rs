@@ -4,7 +4,7 @@ use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
-use crate::utils::errno;
+use crate::utils::{errno, AtomicAsMutPtr};
 
 // FreeBSD can take and compare an `usize` value when used with the `UMTX_OP_WAIT` and
 // `UMTX_OP_WAKE` operations. But we want to be good citizens and use `UMTX_OP_WAIT_UINT_PRIVATE`
@@ -16,11 +16,11 @@ impl Futex for AtomicI32 {
 
     #[inline]
     fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self as *const AtomicI32 as *mut libc::c_void;
-        let ts = convert_timeout(timeout);
+        let ptr = self.as_mut_ptr() as *mut libc::c_void;
+        let mut ts = convert_timeout(timeout);
         let ts_ptr = ts
-            .as_ref()
-            .map(|ts_ref| ts_ref as *const _ as *mut _)
+            .as_mut()
+            .map(|ts_ref| ts_ref as *mut libc::timespec as *mut libc::c_void)
             .unwrap_or(ptr::null_mut());
         let r = unsafe {
             umtx_op(
@@ -50,7 +50,7 @@ impl Futex for AtomicI32 {
 
     #[inline]
     fn wake(&self) -> usize {
-        let ptr = self as *const AtomicI32 as *mut libc::c_void;
+        let ptr = self.as_mut_ptr() as *mut libc::c_void;
         let wake_count = libc::INT_MAX as libc::c_long;
         let r = unsafe {
             umtx_op(

@@ -29,6 +29,7 @@ use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::winnt::{ACCESS_MASK, BOOLEAN, EVENT_ALL_ACCESS, HANDLE, LPCSTR, PHANDLE, PVOID};
 
 use crate::futex::{self, WakeupReason};
+use crate::utils::AtomicAsMutPtr;
 use crate::RESERVED_MASK;
 
 //
@@ -58,7 +59,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
             // may hang indefinitely.
             // There is no way to prevent this race, but as an extra protection we check the return
             // value and repark when the wakeup is definitely not due to the event.
-            let key = atomic as *const AtomicUsize as PVOID;
+            let key = atomic.as_mut_ptr() as PVOID;
             loop {
                 if let WakeupReason::Unknown = wait_for_keyed_event(key, None) {
                     break;
@@ -75,7 +76,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
         Backend::Wait(_) => futex::store_and_wake(atomic, new),
         Backend::Keyed(_) => {
             let wake_count = atomic.swap(new, Release) & RESERVED_MASK;
-            let key = atomic as *const AtomicUsize as PVOID;
+            let key = atomic.as_mut_ptr() as PVOID;
             release_keyed_events(key, wake_count);
         }
         Backend::None => unreachable!(),
@@ -106,7 +107,7 @@ pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
                      another thread is already parked on it"
                 ),
             };
-            let key = atomic as *const AtomicI32 as PVOID;
+            let key = atomic.as_mut_ptr() as PVOID;
             loop {
                 let r = wait_for_keyed_event(key, timeout);
                 if timeout.is_some() {
@@ -137,7 +138,7 @@ pub(crate) fn unpark(atomic: &AtomicI32) {
         Backend::Wait(_) => futex::unpark(atomic),
         Backend::Keyed(_) => {
             if atomic.swap(NOTIFIED, Release) == PARKED {
-                let key = atomic as *const AtomicI32 as PVOID;
+                let key = atomic.as_mut_ptr() as PVOID;
                 release_keyed_events(key, 1);
             }
         }
@@ -147,9 +148,10 @@ pub(crate) fn unpark(atomic: &AtomicI32) {
 
 fn wait_for_keyed_event(key: PVOID, timeout: Option<Duration>) -> WakeupReason {
     if let Backend::Keyed(f) = BACKEND.get() {
-        let nt_timeout = convert_timeout_100ns(timeout);
+        let mut nt_timeout = convert_timeout_100ns(timeout);
         let timeout_ptr = nt_timeout
-            .map(|t_ref| t_ref as *mut _)
+            .as_mut()
+            .map(|t_ref| t_ref as PLARGE_INTEGER)
             .unwrap_or(ptr::null_mut());
         let r = (f.NtWaitForKeyedEvent)(f.handle, key, FALSE, timeout_ptr);
         // `NtWaitForKeyedEvent` is an undocumented API where we don't known the possible

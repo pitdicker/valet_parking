@@ -4,14 +4,14 @@ use core::sync::atomic::AtomicI32;
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
-use crate::utils::errno;
+use crate::utils::{errno, AtomicAsMutPtr};
 
 impl Futex for AtomicI32 {
     type Integer = i32;
 
     #[inline]
     fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self as *const AtomicI32 as *mut i32;
+        let ptr = self.as_mut_ptr() as *mut i32;
         let ts = convert_timeout(timeout);
         let ts_ptr = ts
             .as_ref()
@@ -47,7 +47,7 @@ impl Futex for AtomicI32 {
 
     #[inline]
     fn wake(&self) -> usize {
-        let ptr = self as *const AtomicI32 as *mut i32;
+        let ptr = self.as_mut_ptr() as *mut i32;
         let wake_count = i32::max_value();
         let r = unsafe {
             futex(
