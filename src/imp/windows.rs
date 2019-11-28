@@ -5,13 +5,25 @@
 //! address of the atomic as the key to wait on, we can get something with looks a lot like a futex.
 //!
 //! There is an important difference:
-//! Before the thread goes to sleep it does not check a comparison value. Instead the
-//! `NtReleaseKeyedEvent` function blocks, waiting for a thread to wake if there is none. (Compared
-//! to the Futex wake function which will immediately return.)
+//! - Before the thread goes to sleep it does not check a comparison value. Instead the
+//!   `NtReleaseKeyedEvent` function blocks, waiting for a thread to wake if there is none.
+//! - With every release event only one thread is waked. So we need to keep track of the number of
+//!   waiters, in order to do the correct number of release events when waking them up.
+//! - The thread that releases an event will block until there is a thread waiting on the same
+//!   keyed event. Suppose thread A is waiting; thread B sets the state of an atomic to `NOTIFIED`;
+//!   thread A wakes up spuriously or because of a timeout, sees it is notified, and returns;
+//!   thread B releases the keyed event and blocks becase there is no thread waiting.
 //!
-//! With every release event one thread is waked. Thus we need to keep track of how many waiters
-//! there are in order to wake them all, and to prevent the release function from hanging
-//! indefinitely.
+//! So we have to deal with two races, and the only thing we can control is how long
+//! `NtReleaseKeyedEvent` may block:
+//! - A race when a release event is issued just before a thread starts to wait on it; which can be
+//!   dealt with by making the release timeout long enough.
+//! - A race when a thread wakes up for some reason just before another issues a release event;
+//!   the thread issueing the release can recover by setting a not too large timeout.
+//! A timeout of 100ms seems like a nice compromise, 1000 * 100ns.
+/*
+The property that a thread that releases a keyed event will block when there is no thread waiting on that event gives some trouble.
+*/
 #![allow(non_snake_case)]
 
 use core::cell::Cell;
@@ -28,53 +40,68 @@ use winapi::shared::ntstatus::{STATUS_ALERTED, STATUS_SUCCESS, STATUS_TIMEOUT, S
 use winapi::um::libloaderapi::{GetModuleHandleA, GetProcAddress};
 use winapi::um::winnt::{ACCESS_MASK, BOOLEAN, EVENT_ALL_ACCESS, HANDLE, LPCSTR, PHANDLE, PVOID};
 
-use crate::futex::{self, WakeupReason};
+use crate::futex::{Futex, WakeupReason};
 use crate::RESERVED_MASK;
 
 //
 // Implementation of the Waiters trait
 //
+const HAS_WAITERS: usize = 0x1;
 pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
+    let mut current = atomic.load(Relaxed);
+    if current & !RESERVED_MASK != compare {
+        return;
+    }
     match BACKEND.get() {
-        Backend::Wait(_) => futex::compare_and_wait(atomic, compare),
+        Backend::Wait(_) => {
+            let old = atomic.compare_and_swap(compare, compare | HAS_WAITERS, Relaxed);
+            if old & !RESERVED_MASK != compare {
+                return;
+            }
+            loop {
+                atomic.wait(compare, None);
+                if atomic.load(Relaxed) & !RESERVED_MASK != compare {
+                    break;
+                }
+            }
+        }
         Backend::Keyed(_) => {
             // Register the number of threads waiting. In theory we should be careful not to
             // overflow out of our counter bits. But it is impossible to have so many
             // threads waiting that it doesn't fit in 2^27 on 32-bit and 2^59 on 64-bit
             // (there would not be enough memory to hold their stacks).
-            let mut current = atomic.load(Relaxed);
             loop {
-                if current & !RESERVED_MASK != compare {
-                    return;
-                }
                 match atomic.compare_exchange_weak(current, current + 1, Relaxed, Relaxed) {
                     Ok(_) => break,
                     Err(x) => current = x,
                 }
+                if current & !RESERVED_MASK != compare {
+                    return;
+                }
             }
-            // If a spurious wakeup happens right after a thread stores a new value in `atomic`
-            // but before it can send the signal, we have no way to detect it is spurious.
-            // If we then would not be waiting when the real signal is send, the sending thread
-            // may hang indefinitely.
-            // There is no way to prevent this race, but as an extra protection we check the return
-            // value and repark when the wakeup is definitely not due to the event.
             let key = atomic as *const AtomicUsize as PVOID;
             loop {
-                if let WakeupReason::Unknown = wait_for_keyed_event(key, None) {
+                wait_for_keyed_event(key, None);
+                if atomic.load(Relaxed) & !RESERVED_MASK != compare {
                     break;
                 }
             }
-            debug_assert!(atomic.load(Relaxed) & !RESERVED_MASK != compare);
         }
         Backend::None => unreachable!(),
     }
 }
 
 pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
+    let state = atomic.swap(new, Release) & !RESERVED_MASK;
+    if state == 0 {
+        return; // No waiters
+    }
     match BACKEND.get() {
-        Backend::Wait(_) => futex::store_and_wake(atomic, new),
+        Backend::Wait(_) => {
+            atomic.wake();
+        }
         Backend::Keyed(_) => {
-            let wake_count = atomic.swap(new, Release) & RESERVED_MASK;
+            let wake_count = state;
             let key = atomic as *const AtomicUsize as PVOID;
             release_keyed_events(key, wake_count);
         }
@@ -92,56 +119,55 @@ const PARKED: i32 = 0x1;
 const NOTIFIED: i32 = 0x2;
 
 pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
-    match BACKEND.get() {
-        Backend::Wait(_) => futex::park(atomic, timeout),
-        Backend::Keyed(_) => {
-            match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
-                Ok(_) => {}
-                Err(NOTIFIED) => {
-                    atomic.store(NOT_PARKED, Relaxed);
-                    return;
-                }
-                Err(_) => panic!(
-                    "Tried to call park on an atomic while \
-                     another thread is already parked on it"
-                ),
-            };
-            let key = atomic as *const AtomicI32 as PVOID;
-            loop {
-                let r = wait_for_keyed_event(key, timeout);
-                if timeout.is_some() {
-                    // We don't guarantee there are no spurious wakeups when there was a timeout
-                    // supplied.
-                    atomic.store(NOT_PARKED, Relaxed);
-                    break;
-                }
-                if let WakeupReason::Unknown = r {
-                    // The wakeup was not caused by an alert ot timeout, we know (almost) for sure
-                    // if the status is set to NOTIFIED. But this remains inherently racy, see
-                    // the `compare_and_wait` implementation.
-                    if atomic
-                        .compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed)
-                        .is_ok()
-                    {
-                        break;
-                    }
-                }
-            }
+    match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
+        Ok(_) => {}
+        Err(NOTIFIED) => {
+            atomic.store(NOT_PARKED, Relaxed);
+            return;
         }
-        Backend::None => unreachable!(),
+        Err(_) => panic!(
+            "Tried to call park on an atomic while \
+             another thread is already parked on it"
+        ),
+    };
+    loop {
+        match BACKEND.get() {
+            Backend::Wait(_) => {
+                atomic.wait(PARKED, timeout);
+            }
+            Backend::Keyed(_) => {
+                let key = atomic as *const AtomicI32 as PVOID;
+                wait_for_keyed_event(key, timeout);
+            }
+            Backend::None => unreachable!(),
+        }
+        if timeout.is_some() {
+            // We don't guarantee there are no spurious wakeups when there was a timeout
+            // supplied.
+            atomic.store(NOT_PARKED, Relaxed);
+            break;
+        }
+        if atomic
+            .compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed)
+            .is_ok()
+        {
+            break;
+        }
     }
 }
 
 pub(crate) fn unpark(atomic: &AtomicI32) {
-    match BACKEND.get() {
-        Backend::Wait(_) => futex::unpark(atomic),
-        Backend::Keyed(_) => {
-            if atomic.swap(NOTIFIED, Release) == PARKED {
+    if atomic.swap(NOTIFIED, Release) == PARKED {
+        match BACKEND.get() {
+            Backend::Wait(_) => {
+                atomic.wake();
+            }
+            Backend::Keyed(_) => {
                 let key = atomic as *const AtomicI32 as PVOID;
                 release_keyed_events(key, 1);
             }
+            Backend::None => unreachable!(),
         }
-        Backend::None => unreachable!(),
     }
 }
 
@@ -173,9 +199,10 @@ fn wait_for_keyed_event(key: PVOID, timeout: Option<Duration>) -> WakeupReason {
 }
 
 fn release_keyed_events(key: PVOID, wake_count: usize) {
+    let mut timeout: LARGE_INTEGER = 1000; // 100ms = 1000 * 100ns.
     if let Backend::Keyed(f) = BACKEND.get() {
         for _ in 0..wake_count {
-            (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
+            (f.NtReleaseKeyedEvent)(f.handle, key, 0, &mut timeout);
         }
     } else {
         unreachable!();
