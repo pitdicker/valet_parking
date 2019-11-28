@@ -3,6 +3,8 @@
 //!
 //! On earlier Windows versions we fall back on the undocumented NT Keyed Events API. By using the
 //! address of the atomic as the key to wait on, we can get something with looks a lot like a futex.
+//! The two low-order bits of the key must be zero as they are used by Windows (used to be just one
+//! before one of the Windows 10 updates).
 //!
 //! There is an important difference:
 //! - Before the thread goes to sleep it does not check a comparison value. Instead the
@@ -151,6 +153,7 @@ pub(crate) fn unpark(atomic: &AtomicI32) {
 }
 
 fn wait_for_keyed_event(key: PVOID, timeout: Option<Duration>) -> WakeupReason {
+    debug_assert!(mem::align_of::<AtomicUsize>() >= 4);
     if let Backend::Keyed(f) = BACKEND.get() {
         let mut nt_timeout = convert_timeout_100ns(timeout);
         let timeout_ptr = nt_timeout
@@ -179,6 +182,7 @@ fn wait_for_keyed_event(key: PVOID, timeout: Option<Duration>) -> WakeupReason {
 }
 
 fn release_keyed_events(key: PVOID, wake_count: usize) {
+    debug_assert!(mem::align_of::<AtomicUsize>() >= 4);
     let mut timeout: LARGE_INTEGER = -1000; // relative duration of 1000 * 100ns.
     if let Backend::Keyed(f) = BACKEND.get() {
         for _ in 0..wake_count {
