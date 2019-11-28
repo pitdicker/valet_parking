@@ -251,6 +251,7 @@ mod test {
     use crate::Parker;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::thread::spawn;
+    use std::time::Duration;
 
     const TEST_ROUNDS: usize = 20_000;
 
@@ -271,5 +272,11 @@ mod test {
             }
             FLAG.store(false, Ordering::Relaxed);
         }
+    }
+
+    #[test]
+    fn unpark_timeout() {
+        let parker = Parker::new();
+        parker.park(Some(Duration::from_millis(10)));
     }
 }
