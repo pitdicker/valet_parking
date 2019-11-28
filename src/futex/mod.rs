@@ -1,8 +1,5 @@
-use core::sync::atomic::Ordering::{Relaxed, Release};
-use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
+use core::sync::atomic::{AtomicI32, AtomicUsize};
 use core::time::Duration;
-
-use crate::RESERVED_MASK;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 mod darwin;
@@ -64,36 +61,6 @@ pub(crate) trait Futex {
     fn wake(&self) -> usize;
 }
 
-//
-// Implementation of the Waiters trait
-//
-const HAS_WAITERS: usize = 0x1 << UNCOMPARED_LO_BITS;
-pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
-    let old = atomic.compare_and_swap(compare, compare | HAS_WAITERS, Ordering::Relaxed);
-    if old & !RESERVED_MASK != compare {
-        return;
-    }
-    loop {
-        unsafe {
-            let atomic_i32 = get_i32_ref(atomic);
-            let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_LO_BITS) as u32 as i32;
-            atomic_i32.wait(compare, None);
-        }
-        if atomic.load(Ordering::Relaxed) != (compare | HAS_WAITERS) {
-            break;
-        }
-    }
-}
-
-pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
-    if atomic.swap(new, Ordering::Release) & HAS_WAITERS == HAS_WAITERS {
-        unsafe {
-            let atomic_i32 = get_i32_ref(atomic);
-            atomic_i32.wake();
-        }
-    }
-}
-
 /// The `Waiters` trait has to be implemented on an `AtomicUsize` because we need a pointer-sized
 /// value for some implementations. But the `Futex` trait is implemented on an `AtomicI32` because
 /// that is wait the OS interface relies on. On 64-bit platforms we are going to crate a reference
@@ -125,52 +92,8 @@ pub(crate) unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {
     &*(ptr_sized as *const AtomicUsize as *const AtomicI32)
 }
 #[cfg(target_pointer_width = "32")]
-const UNCOMPARED_LO_BITS: usize = 0;
+pub(crate) const UNCOMPARED_LO_BITS: usize = 0;
 #[cfg(all(target_pointer_width = "64", target_endian = "little"))]
-const UNCOMPARED_LO_BITS: usize = 0;
+pub(crate) const UNCOMPARED_LO_BITS: usize = 0;
 #[cfg(all(target_pointer_width = "64", target_endian = "big"))]
-const UNCOMPARED_LO_BITS: usize = 32;
-
-//
-// Implementation of the Parker trait
-//
-pub(crate) type Parker = AtomicI32;
-
-// States for Parker
-const NOT_PARKED: i32 = 0x0;
-const PARKED: i32 = 0x1;
-const NOTIFIED: i32 = 0x2;
-
-pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
-    match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
-        Ok(_) => {}
-        Err(NOTIFIED) => {
-            atomic.store(NOT_PARKED, Relaxed);
-            return;
-        }
-        Err(_) => panic!(
-            "Tried to call park on an atomic while \
-             another thread is already parked on it"
-        ),
-    };
-    loop {
-        atomic.wait(PARKED, timeout);
-        if timeout.is_some() {
-            // We don't guarantee there are no spurious wakeups when there was a timeout supplied.
-            atomic.store(NOT_PARKED, Relaxed);
-            return;
-        }
-        if atomic
-            .compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed)
-            .is_ok()
-        {
-            break;
-        }
-    }
-}
-
-pub(crate) fn unpark(atomic: &AtomicI32) {
-    if atomic.swap(NOTIFIED, Release) == PARKED {
-        atomic.wake();
-    }
-}
+pub(crate) const UNCOMPARED_LO_BITS: usize = 32;

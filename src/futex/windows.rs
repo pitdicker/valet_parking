@@ -9,8 +9,8 @@ use winapi::um::winbase::INFINITE;
 use winapi::um::winnt::PVOID;
 
 use crate::futex::{Futex, WakeupReason};
+use crate::imp::sys::{Backend, BACKEND};
 use crate::utils::AtomicAsMutPtr;
-use crate::windows::{Backend, BACKEND};
 
 macro_rules! imp_futex {
     ($atomic_type:ident, $int_type:ident) => {
