@@ -27,6 +27,22 @@ use core::time::Duration;
 ))]
 pub mod futex;
 
+#[cfg(any(
+    target_os = "android",
+    target_os = "dragonfly",
+    target_os = "freebsd",
+    target_os = "fuchsia",
+    target_os = "linux",
+    target_os = "ios",
+    target_os = "macos",
+    target_os = "openbsd",
+    target_os = "redox",
+    all(target_arch = "wasm32", target_feature = "atomics"),
+    windows
+))]
+#[doc(inline)]
+pub use futex::{Futex, WakeupReason};
+
 // All platforms for which the futex interface is always available.
 #[cfg(all(
     any(

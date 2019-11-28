@@ -26,7 +26,7 @@ mod windows;
 /// Reason the operating system provided for waking up a thread. Because of the limited guarantees
 /// of some platforms, this turns out not to be all that useful except for documentation purposes.
 #[allow(dead_code)]
-pub(crate) enum WakeupReason {
+pub enum WakeupReason {
     /// Thread did not get parked, because the compare value did not match.
     /// Not all operating systems report this case.
     NoMatch,
@@ -41,7 +41,7 @@ pub(crate) enum WakeupReason {
     Unknown,
 }
 
-pub(crate) trait Futex {
+pub trait Futex {
     type Integer;
 
     /// Park the current thread if `self` equals `compare`. Most implementations will only compare
