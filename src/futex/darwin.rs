@@ -1,59 +1,65 @@
 //! Use the undocumented `ulock_wait` and `ulock_wake` syscalls that are available since
 //! MacOS 10.12 Sierra (Darwin 16.0).
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicI32, AtomicU32};
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
 use crate::utils::{errno, AtomicAsMutPtr};
 
-impl Futex for AtomicI32 {
-    type Integer = i32;
+macro_rules! imp_futex {
+    ($atomic_type:ident, $int_type:ident) => {
+        impl Futex for $atomic_type {
+            type Integer = $int_type;
 
-    #[inline]
-    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self.as_mut_ptr() as *mut libc::c_void;
-        let compare = compare as u32 as u64;
-        let timeout_us = convert_timeout_us(timeout);
-        let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
-        if r >= 0 {
-            // r is the number of threads waiting.
-            WakeupReason::Unknown
-        } else if r == -1 {
-            match errno() {
-                libc::EINTR => WakeupReason::Interrupt,
-                libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
-                e => {
-                    debug_assert!(false, "Unexpected errno of ulock_wait syscall: {}", e);
+            #[inline]
+            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+                let ptr = self.as_mut_ptr() as *mut libc::c_void;
+                let compare = compare as u32 as u64;
+                let timeout_us = convert_timeout_us(timeout);
+                let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
+                if r >= 0 {
+                    // r is the number of threads waiting.
+                    WakeupReason::Unknown
+                } else if r == -1 {
+                    match errno() {
+                        libc::EINTR => WakeupReason::Interrupt,
+                        libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
+                        e => {
+                            debug_assert!(false, "Unexpected errno of ulock_wait syscall: {}", e);
+                            WakeupReason::Unknown
+                        }
+                    }
+                } else {
+                    debug_assert!(
+                        false,
+                        "Unexpected return value of ulock_wait syscall: {}",
+                        r
+                    );
                     WakeupReason::Unknown
                 }
             }
-        } else {
-            debug_assert!(
-                false,
-                "Unexpected return value of ulock_wait syscall: {}",
-                r
-            );
-            WakeupReason::Unknown
-        }
-    }
 
-    #[inline]
-    fn wake(&self) -> usize {
-        let ptr = self.as_mut_ptr() as *mut libc::c_void;
-        let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
-        // Apparently the return value -1 with ENOENT means there were no threads waiting.
-        // Libdispatch considers it a success, so lets do the same.
-        if !(r == 0 || (r == -1 && errno() == libc::ENOENT)) {
-            debug_assert!(
-                r >= 0,
-                "Unexpected return value of ulock_wake syscall: {}; errno: {}",
-                r,
-                errno()
-            );
+            #[inline]
+            fn wake(&self) -> usize {
+                let ptr = self.as_mut_ptr() as *mut libc::c_void;
+                let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
+                // Apparently the return value -1 with ENOENT means there were no threads waiting.
+                // Libdispatch considers it a success, so lets do the same.
+                if !(r == 0 || (r == -1 && errno() == libc::ENOENT)) {
+                    debug_assert!(
+                        r >= 0,
+                        "Unexpected return value of ulock_wake syscall: {}; errno: {}",
+                        r,
+                        errno()
+                    );
+                }
+                return 0; // `ulock_wake` does not return the number of woken threads.
+            }
         }
-        return 0; // `ulock_wake` does not return the number of woken threads.
-    }
+    };
 }
+imp_futex!(AtomicU32, u32);
+imp_futex!(AtomicI32, i32);
 
 const UL_COMPARE_AND_WAIT: u32 = 1;
 const ULF_WAKE_ALL: u32 = 0x100;

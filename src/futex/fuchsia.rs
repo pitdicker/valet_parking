@@ -1,43 +1,49 @@
 #![allow(non_camel_case_types)]
 
-use core::sync::atomic::AtomicI32;
+use core::sync::atomic::{AtomicI32, AtomicU32};
 use core::time::Duration;
 
 use crate::futex::{Futex, WakeupReason};
 use crate::utils::AtomicAsMutPtr;
 
-impl Futex for AtomicI32 {
-    type Integer = i32;
+macro_rules! imp_futex {
+    ($atomic_type:ident, $int_type:ident) => {
+        impl Futex for $atomic_type {
+            type Integer = $int_type;
 
-    #[inline]
-    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
-        let ptr = self.as_mut_ptr() as *mut i32;
-        let deadline = convert_timeout(timeout);
-        let r = unsafe { zx_futex_wait(ptr, compare, deadline) };
-        match r {
-            ZX_OK => WakeupReason::Unknown,
-            ZX_ERR_BAD_STATE => WakeupReason::NoMatch,
-            ZX_ERR_TIMED_OUT if deadline != ZX_TIME_INFINITE => WakeupReason::TimedOut,
-            r => {
-                debug_assert!(false, "Unexpected return value of zx_futex_wait: {}", r);
-                WakeupReason::Unknown
+            #[inline]
+            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+                let ptr = self.as_mut_ptr() as *mut zx_futex_t;
+                let deadline = convert_timeout(timeout);
+                let r = unsafe { zx_futex_wait(ptr, compare as zx_futex_t, deadline) };
+                match r {
+                    ZX_OK => WakeupReason::Unknown,
+                    ZX_ERR_BAD_STATE => WakeupReason::NoMatch,
+                    ZX_ERR_TIMED_OUT if deadline != ZX_TIME_INFINITE => WakeupReason::TimedOut,
+                    r => {
+                        debug_assert!(false, "Unexpected return value of zx_futex_wait: {}", r);
+                        WakeupReason::Unknown
+                    }
+                }
+            }
+
+            #[inline]
+            fn wake(&self) -> usize {
+                let ptr = self.as_mut_ptr() as *mut i32;
+                let wake_count = u32::max_value();
+                let r = unsafe { zx_futex_wake(ptr, wake_count) };
+                debug_assert!(
+                    r == ZX_OK,
+                    "Unexpected return value of zx_futex_wake: {}",
+                    r
+                );
+                0 // FIXME: `zx_futex_wake` does not return the number of woken threads
             }
         }
-    }
-
-    #[inline]
-    fn wake(&self) -> usize {
-        let ptr = self.as_mut_ptr() as *mut i32;
-        let wake_count = u32::max_value();
-        let r = unsafe { zx_futex_wake(ptr, wake_count) };
-        debug_assert!(
-            r == ZX_OK,
-            "Unexpected return value of zx_futex_wake: {}",
-            r
-        );
-        0 // FIXME: `zx_futex_wake` does not return the number of woken threads
-    }
+    };
 }
+imp_futex!(AtomicU32, u32);
+imp_futex!(AtomicI32, i32);
 
 fn convert_timeout(timeout: Option<Duration>) -> zx_time_t {
     match timeout {
