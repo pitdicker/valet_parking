@@ -5,13 +5,23 @@
 //! address of the atomic as the key to wait on, we can get something with looks a lot like a futex.
 //!
 //! There is an important difference:
-//! Before the thread goes to sleep it does not check a comparison value. Instead the
-//! `NtReleaseKeyedEvent` function blocks, waiting for a thread to wake if there is none. (Compared
-//! to the Futex wake function which will immediately return.)
+//! - Before the thread goes to sleep it does not check a comparison value. Instead the
+//!   `NtReleaseKeyedEvent` function blocks, waiting for a thread to wake if there is none.
+//! - With every release event only one thread is waked. So we need to keep track of the number of
+//!   waiters, in order to do the correct number of release events when waking them up.
+//! - The thread that releases an event will block until there is a thread waiting on the same
+//!   keyed event. Suppose thread A is waiting; thread B sets the state of an atomic to `NOTIFIED`;
+//!   thread A wakes up spuriously or because of a timeout, sees it is notified, and returns;
+//!   thread B releases the keyed event and blocks becase there is no thread waiting.
 //!
-//! With every release event one thread is waked. Thus we need to keep track of how many waiters
-//! there are in order to wake them all, and to prevent the release function from hanging
-//! indefinitely.
+//! So we have to deal with two races, and the only thing we can control is how long
+//! `NtReleaseKeyedEvent` may block:
+//! - A race when a release event is issued just before a thread starts to wait on it; which can be
+//!   dealt with by making the release timeout long enough.
+//! - A race when a thread wakes up for some reason just before another issues a release event;
+//!   the thread issueing the release can recover by setting a not too large timeout.
+//! A timeout of 100ms seems like a nice compromise, 1000 * 100ns.
+
 #![allow(non_snake_case)]
 
 use core::cell::Cell;
@@ -53,19 +63,13 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
                     Err(x) => current = x,
                 }
             }
-            // If a spurious wakeup happens right after a thread stores a new value in `atomic`
-            // but before it can send the signal, we have no way to detect it is spurious.
-            // If we then would not be waiting when the real signal is send, the sending thread
-            // may hang indefinitely.
-            // There is no way to prevent this race, but as an extra protection we check the return
-            // value and repark when the wakeup is definitely not due to the event.
             let key = atomic.as_mut_ptr() as PVOID;
             loop {
-                if let WakeupReason::Unknown = wait_for_keyed_event(key, None) {
+                wait_for_keyed_event(key, None);
+                if atomic.load(Relaxed) & !RESERVED_MASK != compare {
                     break;
                 }
             }
-            debug_assert!(atomic.load(Relaxed) & !RESERVED_MASK != compare);
         }
         Backend::None => unreachable!(),
     }
@@ -175,9 +179,10 @@ fn wait_for_keyed_event(key: PVOID, timeout: Option<Duration>) -> WakeupReason {
 }
 
 fn release_keyed_events(key: PVOID, wake_count: usize) {
+    let mut timeout: LARGE_INTEGER = -1000; // relative duration of 1000 * 100ns.
     if let Backend::Keyed(f) = BACKEND.get() {
         for _ in 0..wake_count {
-            (f.NtReleaseKeyedEvent)(f.handle, key, 0, ptr::null_mut());
+            (f.NtReleaseKeyedEvent)(f.handle, key, 0, &mut timeout);
         }
     } else {
         unreachable!();
