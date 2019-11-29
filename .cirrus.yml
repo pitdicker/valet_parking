@@ -1,0 +1,63 @@
+task:
+  name: stable x86_64-unknown-linux
+  container:
+    image: rust:latest
+  test_script:
+    - cargo test
+    - cargo test --features=fallback
+  rustfmt_script:
+    - rustup component add rustfmt
+    - cargo fmt -- --check
+  clippy_script:
+    - rustup component add clippy
+    - cargo clippy --all-targets --all-features
+#    - cargo clippy --all-targets --all-features -- -D warnings
+
+task:
+  name: stable x86_64-pc-windows-msvc
+  windows_container:
+    image: cirrusci/windowsservercore:cmake
+    os_version: 2019
+  env:
+    PATH: $USERPROFILE\.cargo\bin;$PATH
+  setup_script:
+    - curl -sSf -o rustup-init.exe https://win.rustup.rs
+    - rustup-init.exe -y --default-toolchain stable --profile=minimal
+  test_script:
+    - cargo test
+    - cargo test --features=fallback
+
+task:
+  matrix:
+  - name: stable x86_64-apple-darwin
+    osx_instance:
+      image: mojave-xcode
+  - name: stable x86_64-unknown-freebsd-12
+    freebsd_instance:
+      image: freebsd-12-0-release-amd64
+  setup_script:
+    - curl https://sh.rustup.rs -sSf --output rustup.sh
+    - sh rustup.sh -y --default-toolchain stable --profile=minimal
+  test_script:
+    - . $HOME/.cargo/env
+    - cargo test
+    - cargo test --features=fallback
+
+task:
+  name: nightly x86_64-unknown-redox
+  container:
+    image: ubuntu:19.10
+    kvm: true
+  setup_script:
+    - apt update
+    - apt -y install build-essential curl fuse libfuse-dev pkg-config qemu qemu-system-x86
+    - curl https://sh.rustup.rs -sSf --output rustup.sh
+    - sh rustup.sh -y --default-toolchain nightly --profile=minimal
+    - . $HOME/.cargo/env
+    - cargo install redoxer
+    - cargo install redoxfs
+    - redoxer install
+  test_script:
+    - . $HOME/.cargo/env
+    - redoxer test
+    - cargo test --features=fallback
