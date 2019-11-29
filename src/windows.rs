@@ -195,6 +195,9 @@ fn release_keyed_events(key: PVOID, wake_count: usize) {
 
 // NT uses a timeout in units of 100ns, where positive values are absolute and negative values are
 // relative.
+// The value of an absolute timeout matches `FILETIME` as used by `GetSystemTimeAsFileTimeAbsolute`;
+// the number of 100 nanosecond intervals that has passed since January 1, 1601. The clock is the
+// system time, which is not guaranteed to be monotonically increasing.
 fn convert_timeout_100ns(timeout: Option<Duration>) -> Option<LARGE_INTEGER> {
     match timeout {
         Some(duration) => {
