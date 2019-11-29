@@ -1,3 +1,22 @@
+// Note on Futexes:
+//
+// The kernel maintains a queue of threads that are waiting on the address of some atomic integer
+// that is used as futex. Because processes have a virtual address space, the pointer address does
+// not match the hardware address of the atomic. This does not normally concern us as userspace
+// libraries, but we can see a little of the consequences when working with futures:
+//
+// * When the futex is process-private the virtual address is enough to distinguish futexes. Marking
+//   a futex process-private allows a faster implementation in the kernel, as it does not have to do
+//   a mapping and does not have to look through a system global table of futexes.
+// * DragonFly BSD and possibly some others use the underlying physical address (IIUC), and "actions
+//   such as pagein and pageout can ... desynchronize sleeps and wakeups." "To properly
+//   resynchronize the physical address, ALL threads blocking on the address should perform a
+//   modifying operation on the underlying memory before re-entering the wait state" after a
+//   spurious wakeup.
+//
+// TL;DR: make a futex process-private if possible, and do a write on the atomic before reparking a
+// futex after a spurious wakeup.
+
 use core::sync::atomic::Ordering::{Relaxed, Release};
 use core::sync::atomic::{AtomicI32, AtomicUsize, Ordering};
 use core::time::Duration;
@@ -79,7 +98,12 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
             let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_LO_BITS) as u32 as i32;
             atomic_i32.wait(compare, None);
         }
-        if atomic.load(Ordering::Relaxed) != (compare | HAS_WAITERS) {
+        let old = atomic.compare_and_swap(
+            compare | HAS_WAITERS,
+            compare | HAS_WAITERS,
+            Ordering::Relaxed,
+        );
+        if old != (compare | HAS_WAITERS) {
             break;
         }
     }
@@ -142,28 +166,23 @@ const PARKED: i32 = 0x1;
 const NOTIFIED: i32 = 0x2;
 
 pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
-    match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
-        Ok(_) => {}
-        Err(NOTIFIED) => {
-            atomic.store(NOT_PARKED, Relaxed);
-            return;
-        }
-        Err(_) => panic!(
-            "Tried to call park on an atomic while \
-             another thread is already parked on it"
-        ),
-    };
     loop {
+        match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {
+            Ok(_) => {}
+            Err(NOTIFIED) => {
+                atomic.store(NOT_PARKED, Relaxed);
+                return;
+            }
+            Err(_) => panic!(
+                "Tried to call park on an atomic while \
+                 another thread is already parked on it"
+            ),
+        };
         atomic.wait(PARKED, timeout);
-        if timeout.is_some() {
-            // We don't guarantee there are no spurious wakeups when there was a timeout supplied.
-            atomic.store(NOT_PARKED, Relaxed);
-            return;
-        }
-        if atomic
-            .compare_exchange(NOTIFIED, NOT_PARKED, Relaxed, Relaxed)
-            .is_ok()
-        {
+        let wakeup_state = atomic.swap(NOT_PARKED, Relaxed);
+        if wakeup_state == NOTIFIED || timeout.is_some() {
+            // We were either woken up by another thread (NOTIFIED), or there was a timeout
+            // supplied, in which case we don't guarantee there are no spurious wakeups.
             break;
         }
     }
