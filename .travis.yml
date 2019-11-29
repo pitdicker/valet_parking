@@ -7,7 +7,8 @@ language: rust
 
 matrix:
   include:
-  - rust: stable
+  - name: Linux
+    rust: stable
     script:
     - cargo build
     - cargo run --example test_synchronization --release
@@ -15,31 +16,26 @@ matrix:
     - cargo run --example test_synchronization
     - cargo run --example test_synchronization --features=fallback
 
-  # test nightly and test cross-compiling
-  - rust: nightly
+  - name: Nightly and cross compiling
+    rust: nightly
     install:
     - rustup target add i686-unknown-linux-gnu
     - rustup target add i686-unknown-freebsd
     # - rustup target add x86_64-fortanix-unknown-sgx
     - rustup target add x86_64-fuchsia
-    - rustup target add x86_64-pc-windows-gnu
-    # - rustup target add x86_64-unknown-cloudabi
     - rustup target add x86_64-unknown-freebsd
     - rustup target add x86_64-unknown-netbsd
-    - rustup target add x86_64-unknown-redox
     script:
     - cargo build
     - cargo build --target i686-unknown-linux-gnu
     - cargo build --target i686-unknown-freebsd
     # - cargo build --target x86_64-fortanix-unknown-sgx
     - cargo build --target x86_64-fuchsia
-    - cargo build --target x86_64-pc-windows-gnu
-    # - cargo build --target x86_64-unknown-cloudabi
     - cargo build --target x86_64-unknown-freebsd
     - cargo build --target x86_64-unknown-netbsd
-    - cargo build --target x86_64-unknown-redox
 
-  - rust: stable
+  - name: MacOS
+    rust: stable
     os: osx
     script:
     - cargo build
@@ -48,8 +44,8 @@ matrix:
     - cargo run --example test_synchronization
     - cargo run --example test_synchronization --features=fallback
 
-  # MacOS 10.11, needs fallback
-  - rust: stable
+  - name: MacOS 10.11
+    rust: stable
     os: osx
     osx_image: xcode8
     script:
@@ -59,7 +55,8 @@ matrix:
     - cargo run --example test_synchronization
     - cargo run --example test_synchronization --features=fallback
 
-  - rust: stable
+  - name: Windows
+    rust: stable
     os: windows
     script:
     - cargo test
