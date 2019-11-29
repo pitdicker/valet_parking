@@ -137,7 +137,7 @@ fn condvar_wait_timed(atomic: &AtomicUsize, parker: &PosixParker, ts: &libc::tim
         // Wait on a signal through the condvar; mutex gets released
         let r = libc::pthread_cond_timedwait(parker.condvar.get(), parker.mutex.get(), ts);
         // We got woken up; mutex is locked again.
-        debug_assert_eq!(r, 0);
+        debug_assert!(r == 0 || r == libc::ETIMEDOUT);
         let current = atomic.load(Ordering::SeqCst);
         if current & NOTIFY_BIT != NOTIFY_BIT {
             // If this wakeup was not caused by another thread waking us, but was spurious or
