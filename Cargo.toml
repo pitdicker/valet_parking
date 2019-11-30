@@ -24,7 +24,7 @@ winapi = { version = "0.3", features = ["winnt", "ntstatus", "minwindef",
     "winerror", "winbase", "errhandlingapi", "handleapi"] }
 
 [target.'cfg(unix)'.dependencies]
-libc = "0.2.55"
+libc = "0.2.55" # First version with `FUTEX_PRIVATE_FLAG`
 
 [target.'cfg(target_os = "redox")'.dependencies]
-redox_syscall = "0.1"
+redox_syscall = "0.1.1" # First version with `syscall::call`
