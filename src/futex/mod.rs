@@ -69,7 +69,13 @@ pub trait Futex {
     /// `timeout` is relative duration, not an absolute deadline.
     ///
     /// This function does not guard against spurious wakeups.
-    fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason;
+    fn wait(
+        &self,
+        _compare: Self::Integer,
+        _timeout: Option<Duration>,
+    ) -> Result<WakeupReason, ()> {
+        Err(())
+    }
 
     /// Wake all threads waiting on `self`, and set `self` to `new`.
     ///
@@ -80,7 +86,9 @@ pub trait Futex {
     ///
     /// We don't support waking n out of m waiting threads. This gets into pretty advanced use cases,
     /// and it is not clear this can be supported cross-platform and without too much overhead.
-    fn wake(&self) -> usize;
+    fn wake(&self) -> Result<usize, ()> {
+        Err(())
+    }
 }
 
 //
@@ -96,7 +104,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
         unsafe {
             let atomic_i32 = get_i32_ref(atomic);
             let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_LO_BITS) as u32 as i32;
-            atomic_i32.wait(compare, None);
+            let _ = atomic_i32.wait(compare, None);
         }
         let old = atomic.compare_and_swap(
             compare | HAS_WAITERS,
@@ -113,7 +121,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
     if atomic.swap(new, Ordering::Release) & HAS_WAITERS == HAS_WAITERS {
         unsafe {
             let atomic_i32 = get_i32_ref(atomic);
-            atomic_i32.wake();
+            let _ = atomic_i32.wake();
         }
     }
 }
@@ -179,7 +187,7 @@ pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
                  another thread is already parked on it"
             ),
         };
-        atomic.wait(PARKED, timeout);
+        let _ = atomic.wait(PARKED, timeout);
         let wakeup_state = atomic.swap(NOT_PARKED, Relaxed);
         if wakeup_state == NOTIFIED || timeout.is_some() {
             // We were either woken up by another thread (NOTIFIED), or there was a timeout
@@ -191,6 +199,6 @@ pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
 
 pub(crate) fn unpark(atomic: &AtomicI32) {
     if atomic.swap(NOTIFIED, Release) == PARKED {
-        atomic.wake();
+        let _ = atomic.wake();
     }
 }

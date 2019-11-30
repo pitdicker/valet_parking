@@ -12,21 +12,25 @@ macro_rules! imp_futex {
             type Integer = $int_type;
 
             #[inline]
-            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(
+                &self,
+                compare: Self::Integer,
+                timeout: Option<Duration>,
+            ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_void;
                 let compare = compare as u32 as u64;
                 let timeout_us = convert_timeout_us(timeout);
                 let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
                 if r >= 0 {
                     // r is the number of threads waiting.
-                    WakeupReason::Unknown
+                    Ok(WakeupReason::Unknown)
                 } else if r == -1 {
                     match errno() {
-                        libc::EINTR => WakeupReason::Interrupt,
-                        libc::ETIMEDOUT if timeout_us != 0 => WakeupReason::TimedOut,
+                        libc::EINTR => Ok(WakeupReason::Interrupt),
+                        libc::ETIMEDOUT if timeout_us != 0 => Ok(WakeupReason::TimedOut),
                         e => {
                             debug_assert!(false, "Unexpected errno of ulock_wait syscall: {}", e);
-                            WakeupReason::Unknown
+                            Ok(WakeupReason::Unknown)
                         }
                     }
                 } else {
@@ -35,12 +39,12 @@ macro_rules! imp_futex {
                         "Unexpected return value of ulock_wait syscall: {}",
                         r
                     );
-                    WakeupReason::Unknown
+                    Ok(WakeupReason::Unknown)
                 }
             }
 
             #[inline]
-            fn wake(&self) -> usize {
+            fn wake(&self) -> Result<usize, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_void;
                 let r = unsafe { ulock_wake(UL_COMPARE_AND_WAIT | ULF_WAKE_ALL, ptr, 0) };
                 // Apparently the return value -1 with ENOENT means there were no threads waiting.
@@ -53,7 +57,7 @@ macro_rules! imp_futex {
                         errno()
                     );
                 }
-                return 0; // `ulock_wake` does not return the number of woken threads.
+                Ok(0) // `ulock_wake` does not return the number of woken threads.
             }
         }
     };

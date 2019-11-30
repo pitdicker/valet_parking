@@ -17,7 +17,11 @@ macro_rules! imp_futex {
         impl Futex for $atomic_type {
             type Integer = $int_type;
 
-            fn wait(&self, mut compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(
+                &self,
+                mut compare: Self::Integer,
+                timeout: Option<Duration>,
+            ) -> Result<WakeupReason, ()> {
                 if let Backend::Wait(f) = BACKEND.get() {
                     let address = self.as_mut_ptr() as PVOID;
                     let compare_address = &mut compare as *mut $int_type as PVOID;
@@ -29,16 +33,16 @@ macro_rules! imp_futex {
                         ms,
                     );
                     match r {
-                        TRUE => WakeupReason::Unknown, // Can be any reason except TimedOut
+                        TRUE => Ok(WakeupReason::Unknown), // Can be any reason except TimedOut
                         FALSE | _ => match unsafe { GetLastError() } {
-                            ERROR_TIMEOUT if ms != INFINITE => WakeupReason::TimedOut,
+                            ERROR_TIMEOUT if ms != INFINITE => Ok(WakeupReason::TimedOut),
                             e => {
                                 debug_assert!(
                                     false,
                                     "Unexpected error of WaitOnAddress call: {}",
                                     e
                                 );
-                                WakeupReason::Unknown
+                                Ok(WakeupReason::Unknown)
                             }
                         },
                     }
@@ -47,11 +51,11 @@ macro_rules! imp_futex {
                 }
             }
 
-            fn wake(&self) -> usize {
+            fn wake(&self) -> Result<usize, ()> {
                 if let Backend::Wait(f) = BACKEND.get() {
                     let address = self.as_mut_ptr() as PVOID;
                     (f.WakeByAddressAll)(address);
-                    0 // `WakeByAddressAll` does not return the number of woken threads
+                    Ok(0) // `WakeByAddressAll` does not return the number of woken threads
                 } else {
                     unreachable!();
                 }

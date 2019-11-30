@@ -11,19 +11,23 @@ macro_rules! imp_futex {
             type Integer = $int_type;
 
             #[inline]
-            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(
+                &self,
+                compare: Self::Integer,
+                timeout: Option<Duration>,
+            ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_int;
                 let ts = convert_timeout_us(timeout);
                 let r = unsafe { umtx_sleep(ptr, compare as libc::c_int, ts) };
                 match r {
                     0 => WakeupReason::Unknown,
                     -1 => match errno() {
-                        libc::EBUSY => WakeupReason::NoMatch,
-                        libc::EINTR => WakeupReason::Interrupt,
-                        libc::EWOULDBLOCK => WakeupReason::Unknown,
+                        libc::EBUSY => Ok(WakeupReason::NoMatch),
+                        libc::EINTR => Ok(WakeupReason::Interrupt),
+                        libc::EWOULDBLOCK => Ok(WakeupReason::Unknown),
                         e => {
                             debug_assert!(false, "Unexpected errno of umtx_sleep syscall: {}", e);
-                            WakeupReason::Unknown
+                            Ok(WakeupReason::Unknown)
                         }
                     },
                     r => {
@@ -32,13 +36,13 @@ macro_rules! imp_futex {
                             "Unexpected return value of umtx_sleep syscall: {}",
                             r
                         );
-                        WakeupReason::Unknown
+                        Ok(WakeupReason::Unknown)
                     }
                 }
             }
 
             #[inline]
-            fn wake(&self) -> usize {
+            fn wake(&self) -> Result<usize, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_int;
                 let r = unsafe { umtx_wakeup(ptr, 0) };
                 debug_assert!(
@@ -46,7 +50,7 @@ macro_rules! imp_futex {
                     "Unexpected return value of umtx_wakeup syscall: {}",
                     r
                 );
-                cmp::max(r as usize, 0)
+                Ok(cmp::max(r as usize, 0))
             }
         }
     };

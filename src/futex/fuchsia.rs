@@ -12,23 +12,27 @@ macro_rules! imp_futex {
             type Integer = $int_type;
 
             #[inline]
-            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(
+                &self,
+                compare: Self::Integer,
+                timeout: Option<Duration>,
+            ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut zx_futex_t;
                 let deadline = convert_timeout(timeout);
                 let r = unsafe { zx_futex_wait(ptr, compare as zx_futex_t, deadline) };
                 match r {
-                    ZX_OK => WakeupReason::Unknown,
-                    ZX_ERR_BAD_STATE => WakeupReason::NoMatch,
-                    ZX_ERR_TIMED_OUT if deadline != ZX_TIME_INFINITE => WakeupReason::TimedOut,
+                    ZX_OK => Ok(WakeupReason::Unknown),
+                    ZX_ERR_BAD_STATE => Ok(WakeupReason::NoMatch),
+                    ZX_ERR_TIMED_OUT if deadline != ZX_TIME_INFINITE => Ok(WakeupReason::TimedOut),
                     r => {
                         debug_assert!(false, "Unexpected return value of zx_futex_wait: {}", r);
-                        WakeupReason::Unknown
+                        Ok(WakeupReason::Unknown)
                     }
                 }
             }
 
             #[inline]
-            fn wake(&self) -> usize {
+            fn wake(&self) -> Result<usize, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
                 let wake_count = u32::max_value();
                 let r = unsafe { zx_futex_wake(ptr, wake_count) };
@@ -37,7 +41,7 @@ macro_rules! imp_futex {
                     "Unexpected return value of zx_futex_wake: {}",
                     r
                 );
-                0 // FIXME: `zx_futex_wake` does not return the number of woken threads
+                Ok(0) // `zx_futex_wake` does not return the number of woken threads
             }
         }
     };

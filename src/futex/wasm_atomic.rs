@@ -17,26 +17,30 @@ macro_rules! imp_futex {
             type Integer = $int_type;
 
             #[inline]
-            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(
+                &self,
+                compare: Self::Integer,
+                timeout: Option<Duration>,
+            ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
                 let timeout_ns = convert_timeout(timeout);
                 let r = unsafe { wasm32::i32_atomic_wait(ptr, compare as i32, timeout_ns) };
                 match r {
-                    0 => WakeupReason::WokenUp,
-                    1 => WakeupReason::NoMatch,
-                    2 => WakeupReason::TimedOut,
+                    0 => Ok(WakeupReason::WokenUp),
+                    1 => Ok(WakeupReason::NoMatch),
+                    2 => Ok(WakeupReason::TimedOut),
                     _ => {
                         debug_assert!(false, "Unexpected return value of i32.atomic.wait: {}", r);
-                        WakeupReason::Unknown
+                        Ok(WakeupReason::Unknown)
                     }
                 }
             }
 
             #[inline]
-            fn wake(&self) -> usize {
+            fn wake(&self) -> Result<usize, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
                 let r = unsafe { wasm32::atomic_notify(ptr, u32::max_value()) };
-                r as usize
+                Ok(r as usize)
             }
         }
     };

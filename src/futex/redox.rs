@@ -16,7 +16,11 @@ macro_rules! imp_futex {
             type Integer = $int_type;
 
             #[inline]
-            fn wait(&self, compare: Self::Integer, timeout: Option<Duration>) -> WakeupReason {
+            fn wait(
+                &self,
+                compare: Self::Integer,
+                timeout: Option<Duration>,
+            ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
                 let ts = convert_timeout(timeout);
                 let ts_ptr = ts
@@ -35,30 +39,30 @@ macro_rules! imp_futex {
                 match r {
                     Ok(r) => {
                         debug_assert_eq!(r, 0);
-                        WakeupReason::Unknown
+                        Ok(WakeupReason::Unknown)
                     }
                     Err(Error { errno }) => match errno {
-                        EAGAIN => WakeupReason::NoMatch,
-                        EINTR => WakeupReason::Interrupt,
-                        ETIMEDOUT if ts.is_some() => WakeupReason::TimedOut,
+                        EAGAIN => Ok(WakeupReason::NoMatch),
+                        EINTR => Ok(WakeupReason::Interrupt),
+                        ETIMEDOUT if ts.is_some() => Ok(WakeupReason::TimedOut),
                         e => {
                             debug_assert!(false, "Unexpected error of futex syscall: {}", e);
-                            WakeupReason::Unknown
+                            Ok(WakeupReason::Unknown)
                         }
                     },
                 }
             }
 
             #[inline]
-            fn wake(&self) -> usize {
+            fn wake(&self) -> Result<usize, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
                 let wake_count = i32::max_value();
                 let r = unsafe { call::futex(ptr, FUTEX_WAKE, wake_count, 0, ptr::null_mut()) };
                 match r {
-                    Ok(num_woken) => num_woken,
+                    Ok(num_woken) => Ok(num_woken),
                     Err(Error { errno }) => {
                         debug_assert!(false, "Unexpected error of futex syscall: {}", errno);
-                        0
+                        Ok(0)
                     }
                 }
             }
