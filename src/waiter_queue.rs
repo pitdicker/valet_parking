@@ -20,7 +20,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
         // Create a node for our current thread.
         let node = Waiter {
             parker: Parker::new(),
-            next: next,
+            next,
         };
         let me = pub_bits | ((&node as *const Waiter as usize) >> FREE_BITS);
 

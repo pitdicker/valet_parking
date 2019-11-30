@@ -165,6 +165,7 @@ const NOT_PARKED: i32 = 0x0;
 const PARKED: i32 = 0x1;
 const NOTIFIED: i32 = 0x2;
 
+#[allow(clippy::match_wild_err_arm)]
 pub(crate) fn park(atomic: &AtomicI32, timeout: Option<Duration>) {
     loop {
         match atomic.compare_exchange(NOT_PARKED, PARKED, Release, Relaxed) {

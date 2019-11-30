@@ -48,7 +48,6 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
         debug_assert_eq!(r, 0);
 
         let mut current = atomic.load(Ordering::SeqCst);
-        let mut res = true;
         loop {
             // If the old state had its `NOTIFY_BIT` set, some other thread unparked us even
             // before we were able to park ourselves. Then stop trying to park ourselves and
@@ -64,7 +63,7 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
             }
 
             if let Some(timeout) = ts {
-                res = condvar_wait_timed(atomic, &parker, &timeout);
+                condvar_wait_timed(atomic, &parker, &timeout);
             } else {
                 condvar_wait(atomic, &parker);
             }
@@ -79,7 +78,6 @@ pub(crate) fn park(atomic: &AtomicUsize, timeout: Option<Duration>) {
         let r = libc::pthread_cond_destroy(parker.condvar.get());
         debug_assert_eq!(r, 0);
         atomic.fetch_and(!NOTIFY_BIT, Ordering::SeqCst);
-        res; // FIXME: returned bool in previous version
     }
 }
 
@@ -161,7 +159,7 @@ fn condvar_wait_timed(atomic: &AtomicUsize, parker: &PosixParker, ts: &libc::tim
             }
         }
     }
-    return true;
+    true
 }
 
 // x32 Linux uses a non-standard type for tv_nsec in timespec.
