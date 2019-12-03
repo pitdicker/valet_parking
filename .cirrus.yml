@@ -59,8 +59,7 @@ task:
     - cargo install --list | egrep "^\s*redoxfs$" -q || cargo install redoxfs
     - redoxer install
   test_script:
-    # test causes a kernel panic
-    # - redoxer test
+    - redoxer test
     - cargo test --features=fallback
   before_cache_script:
     - rm -f $HOME/.redoxer/toolchain/rust-install.tar.gz

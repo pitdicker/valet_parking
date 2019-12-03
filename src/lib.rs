@@ -256,6 +256,7 @@ mod test {
     const TEST_ROUNDS: usize = 20_000;
 
     #[test]
+    #[cfg(not(target_os = "redox"))] // currently causes a kernel panic
     fn unpark_ordering() {
         static FLAG: AtomicBool = AtomicBool::new(false);
         static PARKER: Parker = Parker::new();
