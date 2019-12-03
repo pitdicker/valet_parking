@@ -202,3 +202,51 @@ pub(crate) fn unpark(atomic: &AtomicI32) {
         let _ = atomic.wake();
     }
 }
+
+#[cfg(test)]
+#[cfg(not(feature = "fallback"))]
+mod test {
+    use crate::Futex;
+    use std::sync::atomic::{AtomicU32, Ordering};
+    use std::thread::spawn;
+    use std::time::Duration;
+
+    #[test]
+    // This test will hang if it does not check the condition variable.
+    fn futex_checks_condition() {
+        let futex = AtomicU32::new(0);
+        let _ = futex.wait(1, None);
+    }
+
+    #[test]
+    // Panics if it is able to observe changes made by another thread while it should be waiting.
+    // May fail if there is a spurious wakeup.
+    fn futex_waits_and_wakes() {
+        const PREPARING: u32 = 0;
+        const PARKED: u32 = 1;
+        const UNPARKED: u32 = 2;
+        static FUTEX: AtomicU32 = AtomicU32::new(0);
+        static OTHER: AtomicU32 = AtomicU32::new(0);
+
+        spawn(|| {
+            while FUTEX.load(Ordering::Relaxed) == PREPARING {}
+            for i in 1..1001 {
+                OTHER.store(i, Ordering::Relaxed);
+            }
+            FUTEX.store(UNPARKED, Ordering::Release);
+            let _ = FUTEX.wake();
+        });
+
+        FUTEX.store(PARKED, Ordering::Relaxed);
+        let _ = FUTEX.wait(PARKED, None);
+        assert_eq!(FUTEX.load(Ordering::Relaxed), UNPARKED);
+        assert_eq!(OTHER.load(Ordering::Relaxed), 1000);
+    }
+
+    #[test]
+    // This test will hang if it does not wake from a timeout.
+    fn futex_wakes_from_timeout() {
+        let futex = AtomicU32::new(0);
+        let _ = futex.wait(0, Some(Duration::from_millis(10)));
+    }
+}
