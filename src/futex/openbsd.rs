@@ -26,7 +26,7 @@ macro_rules! imp_futex {
                 let r = unsafe {
                     futex(
                         ptr,
-                        FUTEX_WAIT,
+                        FUTEX_WAIT | FUTEX_PRIVATE_FLAG,
                         compare as libc::c_int,
                         ts_ptr,
                         ptr::null_mut(),
@@ -48,7 +48,7 @@ macro_rules! imp_futex {
             fn wake(&self) -> Result<usize, ()> {
                 let ptr = self.as_mut_ptr() as *mut u32;
                 let wake_count = i32::max_value();
-                let r = unsafe { futex(ptr, FUTEX_WAKE, wake_count, ptr::null(), ptr::null_mut()) };
+                let r = unsafe { futex(ptr, FUTEX_WAKE | FUTEX_PRIVATE_FLAG, wake_count, ptr::null(), ptr::null_mut()) };
                 debug_assert!(r >= 0, "Unexpected return value of futex call: {}", r);
                 Ok(cmp::max(r as usize, 0))
             }
@@ -60,6 +60,7 @@ imp_futex!(AtomicI32, i32);
 
 const FUTEX_WAIT: libc::c_int = 0;
 const FUTEX_WAKE: libc::c_int = 1;
+const FUTEX_PRIVATE_FLAG: libc::c_int = 128;
 
 extern "C" {
     fn futex(
