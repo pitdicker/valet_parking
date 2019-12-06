@@ -14,13 +14,13 @@ macro_rules! imp_futex {
             #[inline]
             fn wait(
                 &self,
-                compare: Self::Integer,
+                expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_void;
-                let compare = compare as u32 as u64;
+                let expected = expected as u32 as u64;
                 let timeout_us = convert_timeout_us(timeout);
-                let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, compare, timeout_us) };
+                let r = unsafe { ulock_wait(UL_COMPARE_AND_WAIT, ptr, expected, timeout_us) };
                 if r >= 0 {
                     // r is the number of threads waiting.
                     Ok(WakeupReason::Unknown)

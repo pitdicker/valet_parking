@@ -47,9 +47,9 @@ use crate::RESERVED_MASK;
 //
 // Implementation of the Waiters trait
 //
-pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
+pub(crate) fn compare_and_wait(atomic: &AtomicUsize, expected: usize) {
     match BACKEND.get() {
-        Backend::Wait(_) => futex::compare_and_wait(atomic, compare),
+        Backend::Wait(_) => futex::compare_and_wait(atomic, expected),
         Backend::Keyed(_) => {
             // Register the number of threads waiting. In theory we should be careful not to
             // overflow out of our counter bits. But it is impossible to have so many
@@ -57,7 +57,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
             // (there would not be enough memory to hold their stacks).
             let mut current = atomic.load(Relaxed);
             loop {
-                if current & !RESERVED_MASK != compare {
+                if current & !RESERVED_MASK != expected {
                     return;
                 }
                 match atomic.compare_exchange_weak(current, current + 1, Relaxed, Relaxed) {
@@ -68,7 +68,7 @@ pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
             let key = atomic.as_mut_ptr() as PVOID;
             loop {
                 wait_for_keyed_event(key, None);
-                if atomic.load(Relaxed) & !RESERVED_MASK != compare {
+                if atomic.load(Relaxed) & !RESERVED_MASK != expected {
                     break;
                 }
             }

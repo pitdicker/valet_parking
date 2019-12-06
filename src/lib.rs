@@ -129,7 +129,7 @@ pub trait Waiters {
     /// Make the current thread wait until it receives a wake signal. Guaranteed not to wake up
     /// spuriously.
     ///
-    /// The `compare` value is used to decide if this thread needs to be parked. This avoids a race
+    /// The `expected` value is used to decide if this thread needs to be parked. This avoids a race
     /// condition where one thread may try to park itself, while another thread unparks it
     /// concurrently. It is also used to detect whether a wakeup was spurious, in wich case this
     /// `compare_and_wait` will repark the thread. Only the five non-reserved high order bits will
@@ -148,11 +148,11 @@ pub trait Waiters {
     /// [`fence`]: https://doc.rust-lang.org/core/sync/atomic/fn.fence.html
     /// [`Acquire`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Acquire
     /// [`Relaxed`]: https://doc.rust-lang.org/core/sync/atomic/enum.Ordering.html#variant.Relaxed
-    fn compare_and_wait(&self, compare: usize);
+    fn compare_and_wait(&self, expected: usize);
 
     /// Wake up all waiting threads.
     ///
-    /// `new` must be provided to set `self` to some value that is not matched by the `compare`
+    /// `new` must be provided to set `self` to some value that is not matched by the `expected`
     /// value passed to [`compare_and_wait`].
     ///
     /// # Atomic ordering
@@ -170,8 +170,8 @@ pub trait Waiters {
 }
 
 impl Waiters for AtomicUsize {
-    fn compare_and_wait(&self, compare: usize) {
-        imp::compare_and_wait(self, compare & !RESERVED_MASK)
+    fn compare_and_wait(&self, expected: usize) {
+        imp::compare_and_wait(self, expected & !RESERVED_MASK)
     }
 
     unsafe fn store_and_wake(&self, new: usize) {

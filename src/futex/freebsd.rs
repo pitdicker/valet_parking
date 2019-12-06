@@ -21,7 +21,7 @@ macro_rules! imp_futex {
             #[inline]
             fn wait(
                 &self,
-                compare: Self::Integer,
+                expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_void;
@@ -35,7 +35,7 @@ macro_rules! imp_futex {
                     umtx_op(
                         ptr,
                         UMTX_OP_WAIT_UINT_PRIVATE,
-                        compare as i32 as libc::c_long,
+                        expected as i32 as libc::c_long,
                         ts_size,
                         ts_ptr,
                     )

@@ -13,12 +13,12 @@ macro_rules! imp_futex {
             #[inline]
             fn wait(
                 &self,
-                compare: Self::Integer,
+                expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut libc::c_int;
                 let ts = convert_timeout_us(timeout);
-                let r = unsafe { umtx_sleep(ptr, compare as libc::c_int, ts) };
+                let r = unsafe { umtx_sleep(ptr, expected as libc::c_int, ts) };
                 match r {
                     0 => WakeupReason::Unknown,
                     -1 => match errno() {

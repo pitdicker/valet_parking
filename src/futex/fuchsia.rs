@@ -14,12 +14,12 @@ macro_rules! imp_futex {
             #[inline]
             fn wait(
                 &self,
-                compare: Self::Integer,
+                expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut zx_futex_t;
                 let deadline = convert_timeout(timeout);
-                let r = unsafe { zx_futex_wait(ptr, compare as zx_futex_t, deadline) };
+                let r = unsafe { zx_futex_wait(ptr, expected as zx_futex_t, deadline) };
                 match r {
                     ZX_OK => Ok(WakeupReason::Unknown),
                     ZX_ERR_BAD_STATE => Ok(WakeupReason::NoMatch),

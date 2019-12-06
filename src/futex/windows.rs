@@ -19,12 +19,12 @@ macro_rules! imp_futex {
 
             fn wait(
                 &self,
-                mut compare: Self::Integer,
+                mut expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 if let Backend::Wait(f) = BACKEND.get() {
                     let address = self.as_mut_ptr() as PVOID;
-                    let compare_address = &mut compare as *mut $int_type as PVOID;
+                    let compare_address = &mut expected as *mut $int_type as PVOID;
                     let ms = convert_timeout_ms(timeout);
                     let r = (f.WaitOnAddress)(
                         address,

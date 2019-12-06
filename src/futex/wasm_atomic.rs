@@ -19,12 +19,12 @@ macro_rules! imp_futex {
             #[inline]
             fn wait(
                 &self,
-                compare: Self::Integer,
+                expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
                 let timeout_ns = convert_timeout(timeout);
-                let r = unsafe { wasm32::i32_atomic_wait(ptr, compare as i32, timeout_ns) };
+                let r = unsafe { wasm32::i32_atomic_wait(ptr, expected as i32, timeout_ns) };
                 match r {
                     0 => Ok(WakeupReason::WokenUp),
                     1 => Ok(WakeupReason::NoMatch),

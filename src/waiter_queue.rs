@@ -9,12 +9,12 @@ struct Waiter {
     next: usize,
 }
 
-pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
+pub(crate) fn compare_and_wait(atomic: &AtomicUsize, expected: usize) {
     let mut current = atomic.load(Ordering::Relaxed);
     loop {
         let pub_bits = current & !RESERVED_MASK;
         let next = (current & RESERVED_MASK) << FREE_BITS;
-        if pub_bits != compare {
+        if pub_bits != expected {
             break;
         }
         // Create a node for our current thread.

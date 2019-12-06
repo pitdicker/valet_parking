@@ -14,12 +14,12 @@ pub(crate) static HAS_ULOCK: AtomicUsize = AtomicUsize::new(UNINITIALIZED);
 //
 // Implementation of the Waiters trait
 //
-pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
+pub(crate) fn compare_and_wait(atomic: &AtomicUsize, expected: usize) {
     if has_ulock() {
         get_os_release();
-        futex::compare_and_wait(atomic, compare)
+        futex::compare_and_wait(atomic, expected)
     } else {
-        posix::compare_and_wait(atomic, compare)
+        posix::compare_and_wait(atomic, expected)
     }
 }
 

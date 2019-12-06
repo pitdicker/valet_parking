@@ -46,7 +46,7 @@ mod windows;
 /// of some platforms, this turns out not to be all that useful except for documentation purposes.
 #[allow(dead_code)]
 pub enum WakeupReason {
-    /// Thread did not get parked, because the compare value did not match.
+    /// Thread did not get parked, because the `expected` value did not match.
     /// Not all operating systems report this case.
     NoMatch,
     /// Thread got woken up because its timeout expired.
@@ -63,7 +63,7 @@ pub enum WakeupReason {
 pub trait Futex {
     type Integer;
 
-    /// Park the current thread if `self` equals `compare`. Most implementations will only compare
+    /// Park the current thread if `self` equals `expected`. Most implementations will only compare
     /// the 32 high-order bits.
     ///
     /// `timeout` is relative duration, not an absolute deadline.
@@ -71,7 +71,7 @@ pub trait Futex {
     /// This function does not guard against spurious wakeups.
     fn wait(
         &self,
-        _compare: Self::Integer,
+        _expected: Self::Integer,
         _timeout: Option<Duration>,
     ) -> Result<WakeupReason, ()> {
         Err(())
@@ -95,23 +95,23 @@ pub trait Futex {
 // Implementation of the Waiters trait
 //
 const HAS_WAITERS: usize = 0x1 << UNCOMPARED_LO_BITS;
-pub(crate) fn compare_and_wait(atomic: &AtomicUsize, compare: usize) {
-    let old = atomic.compare_and_swap(compare, compare | HAS_WAITERS, Ordering::Relaxed);
-    if old & !RESERVED_MASK != compare {
+pub(crate) fn compare_and_wait(atomic: &AtomicUsize, expected: usize) {
+    let old = atomic.compare_and_swap(expected, expected | HAS_WAITERS, Ordering::Relaxed);
+    if old & !RESERVED_MASK != expected {
         return;
     }
     loop {
         unsafe {
             let atomic_i32 = get_i32_ref(atomic);
-            let compare = ((compare | HAS_WAITERS) >> UNCOMPARED_LO_BITS) as u32 as i32;
-            let _ = atomic_i32.wait(compare, None);
+            let expected = ((expected | HAS_WAITERS) >> UNCOMPARED_LO_BITS) as u32 as i32;
+            let _ = atomic_i32.wait(expected, None);
         }
         let old = atomic.compare_and_swap(
-            compare | HAS_WAITERS,
-            compare | HAS_WAITERS,
+            expected | HAS_WAITERS,
+            expected | HAS_WAITERS,
             Ordering::Relaxed,
         );
-        if old != (compare | HAS_WAITERS) {
+        if old != (expected | HAS_WAITERS) {
             break;
         }
     }
@@ -150,7 +150,7 @@ pub(crate) fn store_and_wake(atomic: &AtomicUsize, new: usize) {
 /// As we don't control the memory orderings the kernel uses, our only option is to use the part of
 /// the atomic that starts at the same address. On little-endian this are the 32 low-order bits, on
 /// big-endian the 32 high-order bits. Notably this part may not contain the (high-order) bits that
-/// match the `compare` value of `compare_and_wait`.
+/// match the `expected` value of `compare_and_wait`.
 ///
 /// Mixed-size Concurrency: https://hal.inria.fr/hal-01413221/document
 pub(crate) unsafe fn get_i32_ref(ptr_sized: &AtomicUsize) -> &AtomicI32 {

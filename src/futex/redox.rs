@@ -18,7 +18,7 @@ macro_rules! imp_futex {
             #[inline]
             fn wait(
                 &self,
-                compare: Self::Integer,
+                expected: Self::Integer,
                 timeout: Option<Duration>,
             ) -> Result<WakeupReason, ()> {
                 let ptr = self.as_mut_ptr() as *mut i32;
@@ -31,7 +31,7 @@ macro_rules! imp_futex {
                     call::futex(
                         ptr,
                         FUTEX_WAIT,
-                        compare as i32,
+                        expected as i32,
                         ts_ptr as usize,
                         ptr::null_mut(),
                     )
